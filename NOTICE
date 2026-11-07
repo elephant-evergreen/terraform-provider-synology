@@ -1,0 +1,7 @@
+Terraform Provider for Synology
+Copyright 2026 the contributors.
+
+This project is not affiliated with or endorsed by Synology or HashiCorp.
+DSM API behavior was researched using Synology's API documentation and the
+MPL-2.0-licensed batonogov/terraform-provider-synology-dsm v0.8.1 source.
+No source files from that provider are included in this implementation.

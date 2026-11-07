@@ -1,0 +1,11 @@
+work/
+dist/
+terraform-provider-synology
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+**/.terraform/
+.env
+.DS_Store

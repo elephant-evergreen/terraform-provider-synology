@@ -1,0 +1,6 @@
+[tools]
+go = "1.27.3"
+terraform = "1.17.1"
+
+[tasks.check]
+run = "bin/check-for-agent"
