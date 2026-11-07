@@ -1,6 +1,6 @@
 # Releases
 
-The intended Registry source is elephant-evergreen/synology. Publish only a reviewed default-branch commit with successful checks and evidence matching its documented DSM support.
+The published Registry source is [elephant-evergreen/synology](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs). Version 0.3.0 has been installed through normal Terraform Registry discovery and verified against the release signature and binary hash. Publish only a reviewed default-branch commit with successful checks and evidence matching its documented DSM support.
 
 The release workflow builds protocol-6 packages for Linux and macOS on amd64 and arm64, creates SHA-256 checksums and a detached GPG signature, and uploads the Registry manifest. Signing credentials are available only to the tag-triggered release job, never ordinary pull requests.
 

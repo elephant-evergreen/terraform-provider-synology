@@ -1,6 +1,6 @@
 # DSM compatibility
 
-The initial release targets import and configuration readback on DSM 7.1.1, verified on a DS220j. This is not evidence for DSM 7.2 or 7.3, other models, domain accounts, encrypted shares or Btrfs-specific behavior.
+Read and import compatibility have been verified on DSM 7.1.1 using a DS220j. This is not evidence for DSM 7.2 or 7.3, other models, domain accounts, encrypted shares or Btrfs-specific behavior.
 
 | Resource | Verified live | Verified with synthetic HTTPS and Terraform |
 | --- | --- | --- |
@@ -9,8 +9,10 @@ The initial release targets import and configuration readback on DSM 7.1.1, veri
 | group | GID, description, import and no-op plan | Create, update, protected delete, import, drift, replacement identity and interrupted creation |
 | share_permissions | Complete explicit local-user/group policy, inheritance, UUID/UID/GID bindings, import and no-op plan | Full policy update, import, external drift, management-only destroy |
 | smb, afp, nfs, ftp, sftp, time | Complete readback of each resource schema, import and no-op plan | Shared singleton implementation; SFTP create/import/update/drift/destroy, preservation of omitted settings |
+| terminal, rsync, windows_discovery, file_transfer_logging | Modeled flags, import and no-op plan | Create, import, update, external drift, management-only destroy and preservation of omitted settings |
+| snmp | Disabled service readback, import without resetting secrets and no-op plan | Active and inactive response shapes, explicit secret generations, ambiguous writes, replacement protection and reconciliation |
 
-Live verification imported two shared folders, three users, three groups, two permission policies and six service singletons into isolated local state. The reviewed import plan contained sixteen imports and zero creates, updates, replacements or deletions. The subsequent plan exited 0. Credentials were supplied through ephemeral SOPS values; the DSM password was absent from saved plan and state. Configuration metadata still enters state and needs protection.
+Version 0.3.0 was installed through normal Terraform Registry discovery, with its signing key and binary hash verified against the signed release. A reviewed production adoption plan imported twenty-one instances: two shared folders, three users, three groups, two permission policies and eleven service singletons. It contained zero creates, updates, replacements or deletions. The subsequent plan exited 0, imported identities and managed attributes matched the reviewed plan, and SMB remained reachable. Credentials were supplied through ephemeral SOPS values; the DSM password and SNMP secrets were absent from saved plan and state. An encrypted state backup was decrypted and matched the original bytes and JSON. Configuration metadata still enters state and needs protection; a local encrypted copy does not establish off-device backup.
 
 No hardware mutation, deletion, interruption or data-restore acceptance test has been performed. Those paths are experimental until exercised on a dedicated disposable DSM environment. Fixtures model the observed read shape and researched mutation contracts; they cannot prove hardware writes. Do not use a production NAS as a destructive test environment.
 
