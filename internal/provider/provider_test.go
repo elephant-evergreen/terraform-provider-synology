@@ -37,16 +37,20 @@ func TestProviderSchema(t *testing.T) {
 }
 
 type fixture struct {
-	mu             sync.Mutex
-	shares         map[string]map[string]any
-	users          map[string]map[string]any
-	groups         map[string]map[string]any
-	permissions    map[string]map[string]any
-	createMode     string
-	createAPI      string
-	createObserved bool
-	writes         int
-	reads          int
+	mu                     sync.Mutex
+	shares                 map[string]map[string]any
+	users                  map[string]map[string]any
+	groups                 map[string]map[string]any
+	permissions            map[string]map[string]any
+	createMode             string
+	createAPI              string
+	createObserved         bool
+	failMembership         bool
+	failUserReadAfterSet   bool
+	userUpdateAcknowledged bool
+	passwordWrites         int
+	writes                 int
+	reads                  int
 }
 
 func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +61,15 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api, method := r.Form.Get("api"), r.Form.Get("method")
+	if api == "SYNO.Core.User" && method == "list" && f.userUpdateAcknowledged && f.failUserReadAfterSet {
+		w.WriteHeader(503)
+		return
+	}
+	if api == "SYNO.Core.User.Group" && method == "join" && f.failMembership {
+		w.WriteHeader(503)
+		return
+	}
+
 	if f.createObserved && f.createMode == "read_failure" && (method == "get" || method == "list") {
 		w.WriteHeader(503)
 		return
@@ -192,6 +205,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			name := r.Form.Get("name")
 			f.users[name] = map[string]any{"name": name, "uid": 1027, "description": r.Form.Get("description"), "email": r.Form.Get("email"), "expired": r.Form.Get("expired"), "groups": []string{"users"}, "unmanaged_future_setting": "preserved"}
 		case "set":
+			f.userUpdateAcknowledged = true
+			if r.Form.Get("password") != "" {
+				f.passwordWrites++
+			}
 			f.writes++
 			u := f.users[r.Form.Get("name")]
 			for _, key := range []string{"description", "email", "expired"} {
@@ -305,6 +322,7 @@ resource "synology_user" "test" {
  deletion_protection = %t
 }
 resource "synology_share_permissions" "test" {
+ depends_on = [synology_user.test]
  share = synology_shared_folder.test.name
  users = {}
  groups = {

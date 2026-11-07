@@ -114,10 +114,12 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 	}
 	m.UUID = types.StringNull()
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"unbound"`))...)
 	actual, readErr := r.client.Share(ctx, m.Name.ValueString())
 	if readErr == nil {
 		m.read(actual)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", nil)...)
 	}
 	if readErr != nil {
 		m.UUID = types.StringNull()

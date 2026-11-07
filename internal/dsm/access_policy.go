@@ -112,16 +112,19 @@ func (c *Client) WriteAccessPolicy(ctx context.Context, share string, expected A
 	if current.ShareUUID != expected.ShareUUID || !maps.Equal(current.UserIDs, expected.UserIDs) || !maps.Equal(current.GroupIDs, expected.GroupIDs) || !maps.Equal(current.Users, expected.Users) || !maps.Equal(current.Groups, expected.Groups) {
 		return errors.New("DSM identities or permission policy changed before mutation; re-run plan")
 	}
-	for _, scope := range []struct {
+	scopes := []struct {
 		kind             string
 		desired, current map[string]string
 		ids              map[string]int64
-	}{{"local_user", users, current.Users, current.UserIDs}, {"local_group", groups, current.Groups, current.GroupIDs}} {
+	}{{"local_user", users, current.Users, current.UserIDs}, {"local_group", groups, current.Groups, current.GroupIDs}}
+	for _, scope := range scopes {
 		for name := range scope.desired {
 			if scope.ids[name] <= 0 {
 				return errors.New("a configured permission principal does not exist")
 			}
 		}
+	}
+	for _, scope := range scopes {
 		if maps.Equal(scope.desired, scope.current) {
 			continue
 		}

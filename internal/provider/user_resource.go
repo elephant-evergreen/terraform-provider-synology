@@ -99,9 +99,6 @@ func (r *userResource) write(ctx context.Context, method string, m userModel, pa
 	if err := r.client.Mutate(ctx, "SYNO.Core.User", 1, method, args); err != nil {
 		return err
 	}
-	if writeGroups {
-		return r.client.SetUserGroups(ctx, m.Name.ValueString(), groups)
-	}
 	return nil
 }
 func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -156,24 +153,33 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	plan.Groups = types.SetNull(types.StringType)
 	plan.Password = types.StringNull()
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"unbound"`))...)
+	u, readErr := r.client.User(ctx, plan.Name.ValueString())
+	if readErr != nil {
+		resp.Diagnostics.AddError("User created but identity readback failed", readErr.Error())
+		return
+	}
+	plan.read(u)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", nil)...)
 	if hasGroups {
 		if err := r.client.SetUserGroups(ctx, plan.Name.ValueString(), wantedGroups); err != nil {
-			resp.Diagnostics.AddError("User created but membership update failed", err.Error()+" The acknowledged account identity is retained in state. Refresh before retrying.")
+			resp.Diagnostics.AddError("User created but membership update failed", err.Error()+" The confirmed account identity is retained in state. Refresh before retrying.")
 			return
 		}
-	}
-	u, readErr := r.client.User(ctx, plan.Name.ValueString())
-	if readErr == nil {
-		plan.read(u)
+		actual, err := r.client.User(ctx, plan.Name.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot verify created user membership", err.Error())
+			return
+		}
+		if actual.UID != plan.UID.ValueInt64() {
+			resp.Diagnostics.AddError("User identity changed during creation", "The provider will not adopt a replacement account.")
+			return
+		}
+		plan.read(actual)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	}
-	if readErr != nil {
-		plan.UID = types.Int64Null()
-		plan.Groups = types.SetNull(types.StringType)
-		plan.Password = types.StringNull()
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		resp.Diagnostics.AddError("User created but readback failed", readErr.Error())
-	}
+
 }
 func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
@@ -239,12 +245,33 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 	groupsChanged := !config.Groups.IsNull() && !config.Groups.IsUnknown() && !plan.Groups.Equal(state.Groups)
-	if password != "" || groupsChanged || !plan.Description.Equal(state.Description) || !plan.Email.Equal(state.Email) || !plan.Expiration.Equal(state.Expiration) {
+	if password != "" || !plan.Description.Equal(state.Description) || !plan.Email.Equal(state.Email) || !plan.Expiration.Equal(state.Expiration) {
 		if err := r.write(ctx, "set", plan, password, groupsChanged); err != nil {
 			resp.Diagnostics.AddError("Cannot update user", err.Error())
 			return
 		}
+		state.Description = plan.Description
+		state.Email = plan.Email
+		state.Expiration = plan.Expiration
+		state.PasswordVersion = plan.PasswordVersion
+		state.DeletionProtection = plan.DeletionProtection
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
+	if groupsChanged {
+		var groups []string
+		resp.Diagnostics.Append(plan.Groups.ElementsAs(ctx, &groups, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if err := r.client.SetUserGroups(ctx, plan.Name.ValueString(), groups); err != nil {
+			resp.Diagnostics.AddError("Cannot update user membership", err.Error())
+			return
+		}
+	}
+
 	u, err := r.client.User(ctx, plan.Name.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot verify user update", err.Error())

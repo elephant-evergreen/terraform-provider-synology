@@ -81,10 +81,12 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	m.GID = types.Int64Null()
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"unbound"`))...)
 	g, readErr := r.client.Group(ctx, m.Name.ValueString())
 	if readErr == nil {
 		m.read(g)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", nil)...)
 	}
 	if readErr != nil {
 		m.GID = types.Int64Null()

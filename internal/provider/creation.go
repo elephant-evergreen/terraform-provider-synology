@@ -18,7 +18,7 @@ func guardUncertainCreation(ctx context.Context, private privateReader) diag.Dia
 		return diags
 	}
 	if len(value) != 0 {
-		diags.AddError("Creation outcome needs explicit reconciliation", "DSM did not acknowledge this creation. The provider will not adopt or delete a same-name object automatically. Back up state, inspect DSM, then remove only this provisional state entry and explicitly import the confirmed object. Do not recreate or destroy data to resolve this error.")
+		diags.AddError("Creation outcome needs explicit reconciliation", "DSM did not confirm a stable identity for this creation. The provider will not adopt or delete a same-name object automatically. Back up state, inspect DSM, then remove only this provisional state entry and explicitly import the confirmed object. Do not recreate or destroy data to resolve this error.")
 	}
 	return diags
 }

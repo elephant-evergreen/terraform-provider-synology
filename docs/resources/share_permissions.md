@@ -3,12 +3,12 @@
 page_title: "synology_share_permissions Resource - synology"
 subcategory: ""
 description: |-
-  Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged.
+  Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged. When managing accounts in the same configuration, depend on all account resources so policy snapshots run after account creation.
 ---
 
 # synology_share_permissions (Resource)
 
-Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged.
+Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged. When managing accounts in the same configuration, depend on all account resources so policy snapshots run after account creation.
 
 ## Example Usage
 

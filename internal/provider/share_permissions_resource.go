@@ -28,7 +28,7 @@ func (*sharePermissionsResource) Metadata(_ context.Context, req resource.Metada
 	resp.TypeName = req.ProviderTypeName + "_share_permissions"
 }
 func (*sharePermissionsResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{MarkdownDescription: "Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{MarkdownDescription: "Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged. When managing accounts in the same configuration, depend on all account resources so policy snapshots run after account creation.", Attributes: map[string]schema.Attribute{
 		"share":      schema.StringAttribute{Required: true, MarkdownDescription: "Shared-folder name and import identifier.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"users":      schema.MapAttribute{Required: true, ElementType: types.StringType, MarkdownDescription: "Complete explicit local-user policy, keyed by account name. Use an empty map for no individual overrides. Unlisted local users receive no explicit grant or deny."},
 		"groups":     schema.MapAttribute{Required: true, ElementType: types.StringType, MarkdownDescription: "Complete explicit local-group policy, keyed by group name. Keep administrators = read_write to preserve management access."},
@@ -54,13 +54,24 @@ func (*sharePermissionsResource) ValidateConfig(ctx context.Context, req resourc
 	if resp.Diagnostics.HasError() || m.Users.IsUnknown() || m.Groups.IsUnknown() {
 		return
 	}
-	users, groups, err := m.maps(ctx)
-	if err == nil {
-		err = dsm.ValidateAccessPolicy(users, groups)
+	for _, policy := range []types.Map{m.Users, m.Groups} {
+		for name, value := range policy.Elements() {
+			if value.IsUnknown() {
+				continue
+			}
+			access, ok := value.(types.String)
+			if !ok || access.IsNull() || name == "" || (access.ValueString() != "read_only" && access.ValueString() != "read_write" && access.ValueString() != "deny") {
+				resp.Diagnostics.AddError("Invalid shared-folder permission policy", "Use named principals with read_only, read_write or deny; omit a principal for inheritance.")
+			}
+		}
 	}
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid shared-folder permission policy", err.Error())
+	if !m.Groups.IsNull() {
+		access, exists := m.Groups.Elements()["administrators"]
+		if !exists || (!access.IsUnknown() && !access.Equal(types.StringValue("read_write"))) {
+			resp.Diagnostics.AddError("Invalid shared-folder permission policy", "administrators must retain read_write access.")
+		}
 	}
+
 }
 func (m *permissionsModel) maps(ctx context.Context) (map[string]string, map[string]string, error) {
 	users, groups := map[string]string{}, map[string]string{}

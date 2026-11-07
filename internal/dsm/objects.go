@@ -170,17 +170,6 @@ func (c *Client) User(ctx context.Context, name string) (User, error) {
 	return User{}, ErrNotFound
 }
 
-func (c *Client) WriteUser(ctx context.Context, method string, u User, password string) error {
-	if method != "create" && method != "set" {
-		return errors.New("unsupported user mutation")
-	}
-	args := url.Values{"name": {u.Name}, "description": {u.Description}, "email": {u.Email}, "expired": {u.Expired}}
-	if password != "" {
-		args.Set("password", password)
-	}
-	return c.Mutate(ctx, "SYNO.Core.User", 1, method, args)
-}
-
 func (c *Client) Groups(ctx context.Context) ([]Group, error) {
 	var data struct {
 		Groups []Group `json:"groups"`

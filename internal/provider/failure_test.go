@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/elephant-evergreen/terraform-provider-synology/internal/dsm"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	tfprovider "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -123,13 +124,21 @@ func TestCreationFailuresPreserveOwnershipBoundary(t *testing.T) {
 				if mode == "read_failure" {
 					f.mu.Lock()
 					f.createMode = ""
+					switch kind {
+					case "shared_folder":
+						f.shares["fixture"]["uuid"] = "foreign-after-ack"
+					case "group":
+						f.groups["fixture"]["gid"] = 9002
+					case "user":
+						f.users["fixture"]["uid"] = 9002
+					}
 					f.mu.Unlock()
 				}
 				read, err := server.ReadResource(ctx, &tfprotov6.ReadResourceRequest{TypeName: name, CurrentState: result.NewState, Private: result.Private})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if mode == "uncertain" {
+				if mode == "uncertain" || mode == "read_failure" {
 					if !protocolErrors(read.Diagnostics) {
 						t.Fatal("uncertain creation adopted a same-name object during refresh")
 					}
@@ -232,5 +241,120 @@ func TestReplacementIdentityRefusesSavedPlanMutation(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPermissionValidationDefersUnknownElements(t *testing.T) {
+	ctx := context.Background()
+	r := &sharePermissionsResource{}
+	var schema resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schema)
+	model := permissionsModel{Share: types.StringValue("fixture"), Users: types.MapValueMust(types.StringType, map[string]attr.Value{}), Groups: types.MapValueMust(types.StringType, map[string]attr.Value{"administrators": types.StringValue("read_write"), "readers": types.StringUnknown()}), ShareUUID: types.StringNull(), UserIDs: types.MapNull(types.Int64Type), GroupIDs: types.MapNull(types.Int64Type)}
+	state := tfsdk.State{Schema: schema.Schema}
+	if d := state.Set(ctx, &model); d.HasError() {
+		t.Fatal(d)
+	}
+	var result resource.ValidateConfigResponse
+	r.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: tfsdk.Config{Schema: schema.Schema, Raw: state.Raw}}, &result)
+	if result.Diagnostics.HasError() {
+		t.Fatalf("valid unknown map elements were rejected: %v", result.Diagnostics)
+	}
+}
+
+func TestPermissionPreflightRejectsMissingGroupBeforeAnyWrite(t *testing.T) {
+	ctx := context.Background()
+	f := &fixture{shares: map[string]map[string]any{"fixture": {"name": "fixture", "uuid": "folder", "vol_path": "/volume1", "desc": "", "hidden": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}}, users: map[string]map[string]any{"reader": {"name": "reader", "uid": 1027, "description": "", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "administrators": {"name": "administrators", "gid": 101, "description": "System default admin group"}}, permissions: map[string]map[string]any{"fixture:local_user:reader": {"name": "reader", "is_readonly": false, "is_writable": true, "is_deny": false}}}
+	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
+	defer server.Close()
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := dsm.New(server.URL, "fixture-user", "fixture-secret", "", ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := client.AccessPolicy(ctx, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.WriteAccessPolicy(ctx, "fixture", current, map[string]string{}, map[string]string{"administrators": "read_write", "missing-group": "read_only"})
+	if err == nil {
+		t.Fatal("expected missing principal error")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.writes != 0 {
+		t.Fatalf("invalid policy performed %d writes", f.writes)
+	}
+}
+
+func TestAcknowledgedPasswordGenerationSurvivesLaterFailure(t *testing.T) {
+	for _, failure := range []string{"membership", "readback"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx := context.Background()
+			f := &fixture{shares: map[string]map[string]any{}, users: map[string]map[string]any{"fixture": {"name": "fixture", "uid": 1027, "description": "initial", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "readers": {"name": "readers", "gid": 1001, "description": "Archive readers"}}, permissions: map[string]map[string]any{}, failMembership: failure == "membership", failUserReadAfterSet: failure == "readback"}
+			server := configuredFixtureProtocol(t, f)
+			r := NewUserResource()
+			var schema resource.SchemaResponse
+			r.Schema(ctx, resource.SchemaRequest{}, &schema)
+			prior := userModel{Name: types.StringValue("fixture"), Description: types.StringValue("initial"), Email: types.StringValue(""), Expiration: types.StringValue("normal"), UID: types.Int64Value(1027), Groups: types.SetValueMust(types.StringType, []attr.Value{types.StringValue("users")}), Password: types.StringNull(), PasswordVersion: types.Int64Value(1), DeletionProtection: types.BoolValue(true)}
+			plan := prior
+			plan.Description = types.StringValue("updated")
+			plan.PasswordVersion = types.Int64Value(2)
+			if failure == "membership" {
+				plan.Groups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("users"), types.StringValue("readers")})
+			}
+			config := plan
+			config.Password = types.StringValue("synthetic-rotated-password")
+			encode := func(m userModel) *tfprotov6.DynamicValue {
+				return protocolModel(t, tfsdk.State{Schema: schema.Schema}, m)
+			}
+			result, err := server.ApplyResourceChange(ctx, &tfprotov6.ApplyResourceChangeRequest{TypeName: "synology_user", PriorState: encode(prior), PlannedState: encode(plan), Config: encode(config)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !protocolErrors(result.Diagnostics) {
+				t.Fatal("expected failure after acknowledged password update")
+			}
+			value, err := result.NewState.Unmarshal(schema.Schema.Type().TerraformType(ctx))
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := tfsdk.State{Schema: schema.Schema, Raw: value}
+			var retained userModel
+			if d := state.Get(ctx, &retained); d.HasError() {
+				t.Fatal(d)
+			}
+			if retained.PasswordVersion.ValueInt64() != 2 {
+				t.Fatal("acknowledged password generation was lost")
+			}
+			f.mu.Lock()
+			f.failMembership = false
+			f.failUserReadAfterSet = false
+			f.mu.Unlock()
+			refreshed, err := server.ReadResource(ctx, &tfprotov6.ReadResourceRequest{TypeName: "synology_user", CurrentState: result.NewState, Private: result.Private})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if protocolErrors(refreshed.Diagnostics) {
+				t.Fatal("refresh failed")
+			}
+			retried, err := server.ApplyResourceChange(ctx, &tfprotov6.ApplyResourceChangeRequest{TypeName: "synology_user", PriorState: refreshed.NewState, PlannedState: encode(plan), Config: encode(config)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if protocolErrors(retried.Diagnostics) {
+				t.Fatal("retry failed")
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.passwordWrites != 1 {
+				t.Fatalf("acknowledged password was sent %d times", f.passwordWrites)
+			}
+		})
 	}
 }
