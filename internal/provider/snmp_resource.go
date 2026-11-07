@@ -50,6 +50,7 @@ func NewSNMPResource() resource.Resource {
 
 func (r *snmpResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	r.serviceResource.Schema(ctx, req, resp)
+	resp.Schema.Attributes["reconciliation_required"] = schema.BoolAttribute{Computed: true, MarkdownDescription: "Terraform lifecycle guard for an interrupted initial secret write. Inspect DSM and explicitly reconcile before replacement; this is local lifecycle metadata, not a DSM setting."}
 	for _, s := range snmpSecrets {
 		resp.Schema.Attributes[s.input] = schema.StringAttribute{Optional: true, Sensitive: true, WriteOnly: true, MarkdownDescription: "Write-only SNMP secret. Supply it with an increased " + s.generation + ". Omit during import. Never persisted in plan or state."}
 		resp.Schema.Attributes[s.generation] = schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(0), MarkdownDescription: "Increase to apply " + s.input + ". Zero preserves the imported secret. An acknowledged write checkpoints this counter before readback. This does not detect external secret changes."}
@@ -119,7 +120,14 @@ func snmpState(actual types.Object, versions map[string]int64) types.Object {
 		values[s.input], kinds[s.input] = types.StringNull(), types.StringType
 		values[s.generation], kinds[s.generation] = types.Int64Value(versions[s.generation]), types.Int64Type
 	}
+	values["reconciliation_required"], kinds["reconciliation_required"] = types.BoolValue(false), types.BoolType
 	return types.ObjectValueMust(kinds, values)
+}
+
+func snmpReconciliation(actual types.Object, required bool) types.Object {
+	values := actual.Attributes()
+	values["reconciliation_required"] = types.BoolValue(required)
+	return types.ObjectValueMust(actual.AttributeTypes(context.Background()), values)
 }
 
 func snmpVersions(ctx context.Context, state tfsdk.State) (map[string]int64, diag.Diagnostics) {
@@ -197,7 +205,9 @@ func (r *snmpResource) applySNMP(ctx context.Context, config tfsdk.Config, plan 
 			return nil, errors.New("configure privacy_protocol only while SNMP v3 privacy is enabled")
 		}
 		if privacy && !v3 {
-			return nil, errors.New("SNMP privacy requires an enabled v3 service")
+			if requested, declared := desired["privacy_enabled"]; declared && requested.(types.Bool).ValueBool() {
+				return nil, errors.New("SNMP privacy requires an enabled v3 service")
+			}
 		}
 		if secrets["password"] != "" && !v3 {
 			return nil, errors.New("rotate the authentication password only with an enabled SNMP v3 service")
@@ -292,9 +302,36 @@ func (r *snmpResource) applySNMP(ctx context.Context, config tfsdk.Config, plan 
 }
 
 func (r *snmpResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	actual, err := r.applySNMP(ctx, req.Config, req.Plan, map[string]int64{}, func(v types.Object) diag.Diagnostics { return resp.State.Set(ctx, v) })
+	secretRequested := false
+	for _, s := range snmpSecrets {
+		var version types.Int64
+		resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root(s.generation), &version)...)
+		secretRequested = secretRequested || (!version.IsNull() && !version.IsUnknown() && version.ValueInt64() > 0)
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	attempted, acknowledged := false, false
+	var checkpointed types.Object
+	actual, err := r.applySNMP(ctx, req.Config, req.Plan, map[string]int64{}, func(v types.Object) diag.Diagnostics {
+		if secretRequested {
+			attempted = true
+			for _, s := range snmpSecrets {
+				acknowledged = acknowledged || v.Attributes()[s.generation].(types.Int64).ValueInt64() > 0
+			}
+		}
+		checkpointed = snmpReconciliation(v, secretRequested)
+		return resp.State.Set(ctx, checkpointed)
+	})
 	if err != nil {
+		if attempted && !acknowledged && rejectedCreation(err) {
+			resp.Diagnostics.Append(resp.State.Set(ctx, snmpReconciliation(checkpointed, false))...)
+			attempted = false
+		}
 		resp.Diagnostics.AddError("Cannot configure SNMP", err.Error())
+		if attempted {
+			resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "Automatic replacement is blocked to prevent replaying a secret write. Back up state and inspect DSM. Release management with a removed block using destroy = false, reconcile configuration secret versions to zero, and import the confirmed configuration without secrets. Do not delete NAS data or accept replacement.")
+		}
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, actual)...)
@@ -311,12 +348,21 @@ func (r *snmpResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("Cannot read SNMP", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, snmpState(actual, versions))...)
+	var pending types.Bool
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
+	if !resp.Diagnostics.HasError() {
+		resp.Diagnostics.Append(resp.State.Set(ctx, snmpReconciliation(snmpState(actual, versions), pending.ValueBool()))...)
+	}
 }
 
 func (r *snmpResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	versions, d := snmpVersions(ctx, req.State)
 	resp.Diagnostics.Append(d...)
+	var pending types.Bool
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
+	if pending.ValueBool() {
+		resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "An initial secret-bearing Create was interrupted. Back up state, inspect DSM, release management with removed using destroy = false and import the confirmed configuration with secret versions zero before another update. Automatic replay is blocked.")
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -332,7 +378,13 @@ func (r *snmpResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	r.serviceResource.Configure(ctx, req, resp)
 }
 
-func (*snmpResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {}
+func (*snmpResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var pending types.Bool
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
+	if pending.ValueBool() {
+		resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "Refusing to release state for an automatic replacement after an interrupted secret-bearing Create. Inspect DSM, back up state and reconcile the failed creation first. To intentionally release management without replay, use a removed block with destroy = false and import the confirmed configuration without secrets.")
+	}
+}
 
 var _ resource.ResourceWithImportState = (*snmpResource)(nil)
 var _ resource.ResourceWithConfigure = (*snmpResource)(nil)

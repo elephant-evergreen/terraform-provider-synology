@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -26,12 +27,13 @@ import (
 )
 
 type snmpFixture struct {
-	mu                     sync.Mutex
-	settings               map[string]any
-	writes, passwordWrites int
-	privacyWrites          int
-	failReadAfterWrite     bool
-	omitActiveProtocol     bool
+	mu                       sync.Mutex
+	settings                 map[string]any
+	writes, passwordWrites   int
+	privacyWrites            int
+	failReadAfterWrite       bool
+	loseWriteAcknowledgement bool
+	omitActiveProtocol       bool
 }
 
 func newSNMPFixture() *snmpFixture {
@@ -92,6 +94,10 @@ func (f *snmpFixture) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			if r.Form.Has("privacy_key") {
 				f.privacyWrites++
+			}
+			if f.loseWriteAcknowledgement {
+				w.WriteHeader(503)
+				return
 			}
 		default:
 			w.WriteHeader(400)
@@ -167,6 +173,55 @@ func TestAccSNMPLifecycle(t *testing.T) {
 		{Config: config(v3), Check: check(4)},
 		{Config: config(disabled + "\ncommunity_version=1\nauthentication_password_version=1\nprivacy_password_version=1"), Check: check(5)},
 	}})
+}
+
+func TestAccSNMPDisablePreservesUnownedPrivacy(t *testing.T) {
+	f := newSNMPFixture()
+	f.settings["enable_snmp"], f.settings["enable_snmp_v3"], f.settings["enable_privacy"], f.settings["rouser"] = true, true, true, "fixture-v3"
+	endpoint, ca := snmpTestEndpoint(t, f)
+	config := func(enabled bool) string {
+		return fmt.Sprintf("provider \"synology\" {\nendpoint=%q\nca_file=%q\nusername=\"fixture-user\"\npassword=\"fixture-login-secret\"\n}\nresource \"synology_snmp\" \"test\" {\nenabled=%t\n}\n", endpoint, ca, enabled)
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, CheckDestroy: func(_ *terraform.State) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.writes != 1 || f.settings["enable_snmp"] != false || f.settings["enable_privacy"] != true || f.passwordWrites != 0 || f.privacyWrites != 0 {
+			return fmt.Errorf("disabling the service changed omitted privacy or secrets")
+		}
+		return nil
+	}, Steps: []resource.TestStep{
+		{Config: config(true), Check: resource.TestCheckResourceAttr("synology_snmp.test", "privacy_enabled", "true")},
+		{Config: config(false), Check: resource.TestCheckResourceAttr("synology_snmp.test", "enabled", "false")},
+	}})
+}
+
+func TestAccSNMPFailedCreateCannotReplaySecret(t *testing.T) {
+	for _, mode := range []string{"readback_failure", "lost_acknowledgement"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newSNMPFixture()
+			f.failReadAfterWrite = mode == "readback_failure"
+			f.loseWriteAcknowledgement = mode == "lost_acknowledgement"
+			endpoint, ca := snmpTestEndpoint(t, f)
+			prefix := fmt.Sprintf("provider \"synology\" {\nendpoint=%q\nca_file=%q\nusername=\"fixture-user\"\npassword=\"fixture-login-secret\"\n}\n", endpoint, ca)
+			public := "enabled=true\nv3_enabled=true\nv1_v2_enabled=false\nprivacy_enabled=false\nusername=\"fixture-v3\"\nauth_protocol=\"SHA\""
+			withSecret := prefix + "resource \"synology_snmp\" \"test\" {\n" + public + "\nauthentication_password_wo=\"fixture-auth-secret\"\nauthentication_password_version=1\n}\n"
+			withoutSecret := prefix + "resource \"synology_snmp\" \"test\" {\n" + public + "\n}\n"
+			resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, CheckDestroy: func(_ *terraform.State) error {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if f.writes != 1 || f.passwordWrites != 1 {
+					return fmt.Errorf("failed Create replayed an acknowledged secret write")
+				}
+				return nil
+			}, Steps: []resource.TestStep{
+				{Config: withSecret, ExpectError: regexp.MustCompile("SNMP secret creation requires reconciliation")},
+				{Config: withSecret, ExpectError: regexp.MustCompile("SNMP secret creation requires reconciliation"), PreConfig: func() { f.mu.Lock(); f.failReadAfterWrite = false; f.loseWriteAcknowledgement = false; f.mu.Unlock() }},
+				{Config: prefix + "removed {\nfrom=synology_snmp.test\nlifecycle {\ndestroy=false\n}\n}\n"},
+				{Config: withoutSecret, ResourceName: "synology_snmp.test", ImportState: true, ImportStateId: "snmp", ImportStatePersist: true, ImportStateConfigExact: true},
+				{Config: withoutSecret, Check: resource.TestCheckResourceAttr("synology_snmp.test", "authentication_password_version", "0")},
+			}})
+		})
+	}
 }
 
 func TestSNMPAcknowledgedSecretVersionSurvivesReadFailure(t *testing.T) {

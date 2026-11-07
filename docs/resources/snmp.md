@@ -53,3 +53,4 @@ import {
 ### Read-Only
 
 - `id` (String) Singleton identity and import identifier: snmp. Destroy only releases Terraform management; it never resets DSM settings.
+- `reconciliation_required` (Boolean) Terraform lifecycle guard for an interrupted initial secret write. Inspect DSM and explicitly reconcile before replacement; this is local lifecycle metadata, not a DSM setting.
