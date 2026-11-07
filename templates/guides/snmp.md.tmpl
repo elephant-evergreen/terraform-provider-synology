@@ -17,7 +17,9 @@ Configure `auth_protocol` only with an enabled v3 service, and `privacy_protocol
 
 An acknowledged Update checkpoints secret versions before readback. A later readback error does not cause that acknowledged rotation to be resent on the next apply. A transport failure during a write cannot establish whether DSM accepted it: inspect DSM and refresh before retrying; do not blindly replay an old saved plan. No cross-client transaction or automatic rollback is promised. Use one configuration writer.
 
-An interrupted initial secret-bearing Create is different: Terraform can taint it and attempt replacement, losing its generation baseline. The local computed `reconciliation_required` guard blocks replacement and further updates. A successful read does not remove that guard. Recover using standard Terraform ownership operations:
+Secret changes require Import and run only through Update. Add an HCL import block with ID `snmp`; Terraform can import and apply an intentional secret update in one reviewed plan. Create cannot establish the existing generation baseline, so it refuses nonzero secret versions before any SNMP write. This also prevents rotation replay during replacements in either destroy-before-create or create-before-destroy order.
+
+An unacknowledged secret Update keeps a local computed `reconciliation_required` guard. This includes malformed negative responses with missing error codes: a failure response is not evidence that no setting changed. The guard blocks retries and replacement, and a successful read does not remove it. Recover using standard Terraform ownership operations:
 
 1. Back up state and inspect the actual DSM configuration and secret outcome. Do not accept replacement or delete NAS data.
 2. Temporarily replace the SNMP resource and its import block with a `removed` block for its address and `lifecycle { destroy = false }`. Review a plan containing only the forget operation and apply it.

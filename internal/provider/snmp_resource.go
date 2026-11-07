@@ -32,7 +32,7 @@ var snmpSecrets = []snmpSecret{
 func NewSNMPResource() resource.Resource {
 	return &snmpResource{serviceResource: serviceResource{definition: serviceDefinition{
 		name: "snmp", api: "SYNO.Core.SNMP", version: 1,
-		description: "SNMP service configuration. Import adopts current settings without writing. Secrets are write-only and change only when their version increases; external secret changes cannot be drift-detected. Destroy releases management without changing DSM. Protocol settings are available only while the corresponding service is active.",
+		description: "SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy releases management without changing DSM. Protocol settings are available only while the corresponding service is active.",
 		fields: map[string]serviceField{
 			"enabled":          {"enable_snmp", types.BoolType, "Enable the SNMP service."},
 			"v1_v2_enabled":    {"enable_snmp_v1v2", types.BoolType, "Enable SNMP v1/v2c."},
@@ -50,7 +50,7 @@ func NewSNMPResource() resource.Resource {
 
 func (r *snmpResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	r.serviceResource.Schema(ctx, req, resp)
-	resp.Schema.Attributes["reconciliation_required"] = schema.BoolAttribute{Computed: true, MarkdownDescription: "Terraform lifecycle guard for an interrupted initial secret write. Inspect DSM and explicitly reconcile before replacement; this is local lifecycle metadata, not a DSM setting."}
+	resp.Schema.Attributes["reconciliation_required"] = schema.BoolAttribute{Computed: true, MarkdownDescription: "Terraform lifecycle guard for a secret write whose acknowledgement is uncertain. Inspect DSM and explicitly reconcile before retry or replacement; this is local lifecycle metadata, not a DSM setting."}
 	for _, s := range snmpSecrets {
 		resp.Schema.Attributes[s.input] = schema.StringAttribute{Optional: true, Sensitive: true, WriteOnly: true, MarkdownDescription: "Write-only SNMP secret. Supply it with an increased " + s.generation + ". Omit during import. Never persisted in plan or state."}
 		resp.Schema.Attributes[s.generation] = schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(0), MarkdownDescription: "Increase to apply " + s.input + ". Zero preserves the imported secret. An acknowledged write checkpoints this counter before readback. This does not detect external secret changes."}
@@ -244,7 +244,7 @@ func (r *snmpResource) applySNMP(ctx context.Context, config tfsdk.Config, plan 
 				}
 			}
 		}
-		if d := checkpoint(snmpState(current, previous)); d.HasError() {
+		if d := checkpoint(snmpReconciliation(snmpState(current, previous), len(secrets) > 0)); d.HasError() {
 			return nil, errors.New("cannot checkpoint the observed SNMP configuration")
 		}
 		if serviceMatches(current, desired) && len(secrets) == 0 {
@@ -302,36 +302,19 @@ func (r *snmpResource) applySNMP(ctx context.Context, config tfsdk.Config, plan 
 }
 
 func (r *snmpResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	secretRequested := false
 	for _, s := range snmpSecrets {
 		var version types.Int64
 		resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root(s.generation), &version)...)
-		secretRequested = secretRequested || (!version.IsNull() && !version.IsUnknown() && version.ValueInt64() > 0)
+		if !version.IsNull() && !version.IsUnknown() && version.ValueInt64() > 0 {
+			resp.Diagnostics.AddError("SNMP secret changes require import", "SNMP settings already exist on DSM. Add an import block with ID snmp before changing secrets. Terraform can import and apply an intentional update in one reviewed plan. Create cannot establish an existing secret-generation baseline and never rotates secrets, including during replacement.")
+		}
 	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	attempted, acknowledged := false, false
-	var checkpointed types.Object
-	actual, err := r.applySNMP(ctx, req.Config, req.Plan, map[string]int64{}, func(v types.Object) diag.Diagnostics {
-		if secretRequested {
-			attempted = true
-			for _, s := range snmpSecrets {
-				acknowledged = acknowledged || v.Attributes()[s.generation].(types.Int64).ValueInt64() > 0
-			}
-		}
-		checkpointed = snmpReconciliation(v, secretRequested)
-		return resp.State.Set(ctx, checkpointed)
-	})
+	actual, err := r.applySNMP(ctx, req.Config, req.Plan, map[string]int64{}, func(v types.Object) diag.Diagnostics { return resp.State.Set(ctx, v) })
 	if err != nil {
-		if attempted && !acknowledged && rejectedCreation(err) {
-			resp.Diagnostics.Append(resp.State.Set(ctx, snmpReconciliation(checkpointed, false))...)
-			attempted = false
-		}
 		resp.Diagnostics.AddError("Cannot configure SNMP", err.Error())
-		if attempted {
-			resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "Automatic replacement is blocked to prevent replaying a secret write. Back up state and inspect DSM. Release management with a removed block using destroy = false, reconcile configuration secret versions to zero, and import the confirmed configuration without secrets. Do not delete NAS data or accept replacement.")
-		}
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, actual)...)
@@ -361,7 +344,7 @@ func (r *snmpResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	var pending types.Bool
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
 	if pending.ValueBool() {
-		resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "An initial secret-bearing Create was interrupted. Back up state, inspect DSM, release management with removed using destroy = false and import the confirmed configuration with secret versions zero before another update. Automatic replay is blocked.")
+		resp.Diagnostics.AddError("SNMP secret write requires reconciliation", snmpReconciliationMessage)
 	}
 	if resp.Diagnostics.HasError() {
 		return
@@ -369,6 +352,11 @@ func (r *snmpResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	actual, err := r.applySNMP(ctx, req.Config, req.Plan, versions, func(v types.Object) diag.Diagnostics { return resp.State.Set(ctx, v) })
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot update SNMP", err.Error())
+		var uncertain types.Bool
+		resp.Diagnostics.Append(resp.State.GetAttribute(ctx, path.Root("reconciliation_required"), &uncertain)...)
+		if uncertain.ValueBool() {
+			resp.Diagnostics.AddError("SNMP secret write requires reconciliation", snmpReconciliationMessage)
+		}
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, actual)...)
@@ -382,9 +370,11 @@ func (*snmpResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	var pending types.Bool
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
 	if pending.ValueBool() {
-		resp.Diagnostics.AddError("SNMP secret creation requires reconciliation", "Refusing to release state for an automatic replacement after an interrupted secret-bearing Create. Inspect DSM, back up state and reconcile the failed creation first. To intentionally release management without replay, use a removed block with destroy = false and import the confirmed configuration without secrets.")
+		resp.Diagnostics.AddError("SNMP secret write requires reconciliation", snmpReconciliationMessage)
 	}
 }
+
+const snmpReconciliationMessage = "A secret write was not acknowledged reliably. Automatic retries and replacement are blocked. Back up state and inspect DSM. Release management using a removed block with destroy = false, reconcile configuration secret versions to zero, and import the confirmed configuration without write-only secrets. Do not delete NAS data or accept replacement."
 
 var _ resource.ResourceWithImportState = (*snmpResource)(nil)
 var _ resource.ResourceWithConfigure = (*snmpResource)(nil)
