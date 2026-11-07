@@ -31,8 +31,8 @@ func TestProviderSchema(t *testing.T) {
 			t.Fatalf("schema: %s: %s", diag.Summary, diag.Detail)
 		}
 	}
-	if len(result.ResourceSchemas) != 14 {
-		t.Fatalf("expected fourteen typed resources, got %d", len(result.ResourceSchemas))
+	if len(result.ResourceSchemas) != 15 {
+		t.Fatalf("expected fifteen typed resources, got %d", len(result.ResourceSchemas))
 	}
 }
 

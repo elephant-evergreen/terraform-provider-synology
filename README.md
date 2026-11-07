@@ -1,6 +1,6 @@
 # Terraform Provider for Synology
 
-Manage DSM shared folders, local accounts, groups, explicit share permissions, file-sharing services, transfer logging, discovery, terminal access and time settings using typed Terraform resources and direct HTTPS communication.
+Manage DSM shared folders, local accounts, groups, explicit share permissions, file-sharing services, transfer logging, discovery, terminal access, SNMP and time settings using typed Terraform resources and direct HTTPS communication.
 
 The provider is under development. A GitHub repository or successful fixture test does not establish Registry availability or hardware lifecycle compatibility. See [compatibility](docs/compatibility.md), [design](docs/design.md) and [verification boundaries](docs/testing.md).
 
@@ -11,6 +11,8 @@ Existing named objects (shared folders, users and groups) must be imported. Serv
 The intended Registry source is `elephant-evergreen/synology`. Once a verified release is published, Terraform will install the provider using normal `terraform init`. Connection settings may be supplied through `SYNOLOGY_ENDPOINT`, `SYNOLOGY_USERNAME` and `SYNOLOGY_PASSWORD`, or ephemeral values in the provider configuration. The endpoint must have a valid HTTPS certificate; a private CA can be supplied with `ca_file`.
 
 Use ordinary Terraform import blocks and review the resulting plan before applying it. An adoption plan must contain imports and zero creates, updates, replacements or deletions. Configuration and account information enter state; passwords and transient DSM sessions must not.
+
+For SNMP adoption and explicit secret changes, see the [SNMP guide](docs/guides/snmp.md). Import leaves community and v3 passwords unchanged; unreadable secrets cannot be drift-detected. Applied SNMP secret versions protect their state from Destroy; release management explicitly with a removed block using destroy = false.
 
 ## Development
 
