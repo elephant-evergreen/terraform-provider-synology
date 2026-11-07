@@ -115,6 +115,22 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("New user needs a password", "Supply password_wo and password_version >= 1 when creating a new account. Existing users must be imported without resetting their password.")
 		return
 	}
+	if config.Groups.IsUnknown() {
+		resp.Diagnostics.AddError("Unknown group membership", "Resolve groups before creating the account.")
+		return
+	}
+	wantedGroups := []string{}
+	hasGroups := !config.Groups.IsNull()
+	if hasGroups {
+		resp.Diagnostics.Append(config.Groups.ElementsAs(ctx, &wantedGroups, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !slices.Contains(wantedGroups, "users") {
+			resp.Diagnostics.AddError("Invalid group membership", "Local accounts must retain membership in users.")
+			return
+		}
+	}
 	_, err := r.client.User(ctx, plan.Name.ValueString())
 	if err == nil {
 		resp.Diagnostics.AddError("User already exists", "Import the existing account by name. Creation will not adopt or reset an existing account.")
@@ -124,15 +140,32 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Cannot check user identity", err.Error())
 		return
 	}
-	err = r.write(ctx, "create", plan, config.Password.ValueString(), !plan.Groups.IsUnknown() && !plan.Groups.IsNull())
+	err = r.write(ctx, "create", plan, config.Password.ValueString(), false)
+	if err != nil {
+		if !rejectedCreation(err) {
+			plan.UID = types.Int64Null()
+			plan.Groups = types.SetNull(types.StringType)
+			plan.Password = types.StringNull()
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"uncertain"`))...)
+		}
+		resp.Diagnostics.AddError("User creation was not acknowledged", err.Error())
+		return
+	}
+	plan.UID = types.Int64Null()
+	plan.Groups = types.SetNull(types.StringType)
+	plan.Password = types.StringNull()
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if hasGroups {
+		if err := r.client.SetUserGroups(ctx, plan.Name.ValueString(), wantedGroups); err != nil {
+			resp.Diagnostics.AddError("User created but membership update failed", err.Error()+" The acknowledged account identity is retained in state. Refresh before retrying.")
+			return
+		}
+	}
 	u, readErr := r.client.User(ctx, plan.Name.ValueString())
 	if readErr == nil {
 		plan.read(u)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("User creation did not finish cleanly", err.Error())
-		return
 	}
 	if readErr != nil {
 		plan.UID = types.Int64Null()
@@ -143,6 +176,10 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 }
 func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m userModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -150,6 +187,10 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	u, err := r.client.User(ctx, m.Name.ValueString())
 	if errors.Is(err, dsm.ErrNotFound) {
+		if m.DeletionProtection.IsNull() || m.DeletionProtection.ValueBool() {
+			resp.Diagnostics.AddError("Protected account is missing", "Inspect DSM and explicitly reconcile the account before replacing its identity.")
+			return
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -165,11 +206,28 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan, state, config userModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if config.Groups.IsUnknown() {
+		resp.Diagnostics.AddError("Unknown group membership", "Resolve groups before updating the account.")
+		return
+	}
+	current, err := r.client.User(ctx, state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot verify user identity", err.Error())
+		return
+	}
+	if state.UID.IsNull() || state.UID.ValueInt64() <= 0 || current.UID != state.UID.ValueInt64() {
+		resp.Diagnostics.AddError("User identity changed", "Refusing to update an unverified or replacement account.")
 		return
 	}
 	password := ""
@@ -180,7 +238,7 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 	}
-	groupsChanged := !plan.Groups.Equal(state.Groups)
+	groupsChanged := !config.Groups.IsNull() && !config.Groups.IsUnknown() && !plan.Groups.Equal(state.Groups)
 	if password != "" || groupsChanged || !plan.Description.Equal(state.Description) || !plan.Email.Equal(state.Email) || !plan.Expiration.Equal(state.Expiration) {
 		if err := r.write(ctx, "set", plan, password, groupsChanged); err != nil {
 			resp.Diagnostics.AddError("Cannot update user", err.Error())
@@ -192,10 +250,18 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Cannot verify user update", err.Error())
 		return
 	}
+	if u.UID != state.UID.ValueInt64() {
+		resp.Diagnostics.AddError("User identity changed during update", "The provider will not adopt the replacement account.")
+		return
+	}
 	plan.read(u)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m userModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -214,7 +280,7 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddError("Cannot verify user identity", err.Error())
 		return
 	}
-	if !m.UID.IsNull() && u.UID != m.UID.ValueInt64() {
+	if m.UID.IsNull() || m.UID.ValueInt64() <= 0 || u.UID != m.UID.ValueInt64() {
 		resp.Diagnostics.AddError("User identity changed", "Refusing to delete a different account with the same name.")
 		return
 	}

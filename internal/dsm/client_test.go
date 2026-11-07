@@ -2,6 +2,7 @@ package dsm
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -132,5 +133,15 @@ func TestPermissionSemantics(t *testing.T) {
 	}
 	if _, err := (Permission{Deny: true, Writable: true}).Access(); err == nil {
 		t.Fatal("accepted conflicting permission flags")
+	}
+}
+
+func TestNullPermissionFlagsAreRejected(t *testing.T) {
+	for _, field := range []string{"is_readonly", "is_writable", "is_deny"} {
+		row := map[string]json.RawMessage{"name": json.RawMessage(`"fixture"`), "is_readonly": json.RawMessage("false"), "is_writable": json.RawMessage("false"), "is_deny": json.RawMessage("false")}
+		row[field] = json.RawMessage("null")
+		if _, err := decodePermission(row); err == nil {
+			t.Fatalf("accepted null %s", field)
+		}
 	}
 }

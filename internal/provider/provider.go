@@ -90,7 +90,7 @@ func fallback(v types.String, env string) string {
 }
 
 func (*synologyProvider) Resources(context.Context) []func() resource.Resource {
-	return append([]func() resource.Resource{NewSharedFolderResource, NewUserResource, NewGroupResource, NewSharePermissionResource}, serviceResources()...)
+	return append([]func() resource.Resource{NewSharedFolderResource, NewUserResource, NewGroupResource, NewSharePermissionsResource}, serviceResources()...)
 }
 
 func (*synologyProvider) DataSources(context.Context) []func() datasource.DataSource { return nil }

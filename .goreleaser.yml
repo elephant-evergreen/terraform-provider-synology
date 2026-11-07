@@ -10,7 +10,7 @@ builds:
 archives:
   - formats: [zip]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
-    files: [LICENSE, NOTICE]
+    files: [LICENSE, NOTICE, THIRD_PARTY_LICENSES.txt]
 checksum:
   extra_files:
     - glob: terraform-registry-manifest.json

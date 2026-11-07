@@ -70,14 +70,21 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	err = r.client.WriteGroup(ctx, "create", dsm.Group{Name: m.Name.ValueString(), Description: m.Description.ValueString()})
+	if err != nil {
+		if !rejectedCreation(err) {
+			m.GID = types.Int64Null()
+			resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"uncertain"`))...)
+		}
+		resp.Diagnostics.AddError("Group creation was not acknowledged", err.Error())
+		return
+	}
+	m.GID = types.Int64Null()
+	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	g, readErr := r.client.Group(ctx, m.Name.ValueString())
 	if readErr == nil {
 		m.read(g)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("Group creation did not finish cleanly", err.Error())
-		return
 	}
 	if readErr != nil {
 		m.GID = types.Int64Null()
@@ -86,6 +93,10 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 }
 func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m groupModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -93,6 +104,10 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 	g, err := r.client.Group(ctx, m.Name.ValueString())
 	if errors.Is(err, dsm.ErrNotFound) {
+		if m.DeletionProtection.IsNull() || m.DeletionProtection.ValueBool() {
+			resp.Diagnostics.AddError("Protected group is missing", "Inspect DSM and explicitly reconcile the missing group before replacing its identity.")
+			return
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -108,10 +123,23 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan, state groupModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	current, err := r.client.Group(ctx, state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot verify group identity", err.Error())
+		return
+	}
+	if state.GID.IsNull() || state.GID.ValueInt64() <= 0 || current.GID != state.GID.ValueInt64() {
+		resp.Diagnostics.AddError("Group identity changed", "Refusing to update an unverified or replacement group.")
 		return
 	}
 	if !plan.Description.Equal(state.Description) {
@@ -125,10 +153,18 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("Cannot verify group update", err.Error())
 		return
 	}
+	if g.GID != state.GID.ValueInt64() {
+		resp.Diagnostics.AddError("Group identity changed during update", "The provider will not adopt a replacement group.")
+		return
+	}
 	plan.read(g)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m groupModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -147,7 +183,7 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		resp.Diagnostics.AddError("Cannot verify group identity", err.Error())
 		return
 	}
-	if !m.GID.IsNull() && g.GID != m.GID.ValueInt64() {
+	if m.GID.IsNull() || m.GID.ValueInt64() <= 0 || g.GID != m.GID.ValueInt64() {
 		resp.Diagnostics.AddError("Group identity changed", "Refusing to delete a different group with the same name.")
 		return
 	}

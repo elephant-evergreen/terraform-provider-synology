@@ -29,6 +29,9 @@ jobs:
           terraform_version: '1.17.1'
           terraform_wrapper: false
       - run: bin/check-for-agent
+      - run: go tool govulncheck ./...
+      - run: bin/generate-licenses
+      - run: git diff --exit-code -- THIRD_PARTY_LICENSES.txt
       - run: go tool tfplugindocs generate --provider-name synology
       - run: git diff --exit-code -- docs
       - name: Verify release packages

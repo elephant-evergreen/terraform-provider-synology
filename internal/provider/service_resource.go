@@ -13,6 +13,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -75,7 +77,7 @@ func (r *serviceResource) Metadata(_ context.Context, req resource.MetadataReque
 	resp.TypeName = req.ProviderTypeName + "_" + r.definition.name
 }
 func (r *serviceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	attributes := map[string]schema.Attribute{"id": schema.StringAttribute{Computed: true, MarkdownDescription: "Singleton identity and import identifier: " + r.definition.name + ". Destroy only releases Terraform management; it never resets DSM settings."}}
+	attributes := map[string]schema.Attribute{"id": schema.StringAttribute{Computed: true, MarkdownDescription: "Singleton identity and import identifier: " + r.definition.name + ". Destroy only releases Terraform management; it never resets DSM settings.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}}
 	for name, field := range r.definition.fields {
 		switch field.kind {
 		case types.BoolType:
@@ -221,6 +223,19 @@ func (r *serviceResource) apply(ctx context.Context, config tfsdk.Config) (types
 	}
 }
 func (r *serviceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	if _, _, err := r.desired(ctx, req.Config); err != nil {
+		resp.Diagnostics.AddError("Invalid DSM service configuration", err.Error())
+		return
+	}
+	prior, err := r.read(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot inspect DSM service", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	actual, err := r.apply(ctx, req.Config)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot configure DSM service", err.Error())

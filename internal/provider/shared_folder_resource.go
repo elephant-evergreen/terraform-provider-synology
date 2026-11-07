@@ -103,14 +103,21 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	err = r.client.WriteShare(ctx, "create", m.object())
+	if err != nil {
+		if !rejectedCreation(err) {
+			m.UUID = types.StringNull()
+			resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"uncertain"`))...)
+		}
+		resp.Diagnostics.AddError("Shared-folder creation was not acknowledged", err.Error())
+		return
+	}
+	m.UUID = types.StringNull()
+	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	actual, readErr := r.client.Share(ctx, m.Name.ValueString())
 	if readErr == nil {
 		m.read(actual)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("Shared-folder creation did not finish cleanly", err.Error())
-		return
 	}
 	if readErr != nil {
 		m.UUID = types.StringNull()
@@ -119,6 +126,10 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 	}
 }
 func (r *sharedFolderResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m shareModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -126,6 +137,10 @@ func (r *sharedFolderResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	s, err := r.client.Share(ctx, m.Name.ValueString())
 	if errors.Is(err, dsm.ErrNotFound) {
+		if m.DeletionProtection.IsNull() || m.DeletionProtection.ValueBool() {
+			resp.Diagnostics.AddError("Protected shared folder is missing", "DSM confirmed that the folder is absent. Inspect storage and restore access before reconciling state; the provider will not silently replace protected data with an empty folder.")
+			return
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -141,10 +156,23 @@ func (r *sharedFolderResource) Read(ctx context.Context, req resource.ReadReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 func (r *sharedFolderResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan, state shareModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	current, err := r.client.Share(ctx, state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot verify shared-folder identity", err.Error())
+		return
+	}
+	if state.UUID.IsNull() || state.UUID.ValueString() == "" || current.UUID != state.UUID.ValueString() {
+		resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to update an unverified or replacement folder. Refresh and explicitly reconcile its identity.")
 		return
 	}
 	if plan.object() != state.object() {
@@ -158,10 +186,18 @@ func (r *sharedFolderResource) Update(ctx context.Context, req resource.UpdateRe
 		resp.Diagnostics.AddError("Cannot verify shared-folder update", err.Error())
 		return
 	}
+	if s.UUID != state.UUID.ValueString() {
+		resp.Diagnostics.AddError("Shared-folder identity changed during update", "The provider will not adopt the replacement folder. Inspect DSM before continuing.")
+		return
+	}
 	plan.read(s)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 func (r *sharedFolderResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var m shareModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() {
@@ -171,12 +207,16 @@ func (r *sharedFolderResource) Delete(ctx context.Context, req resource.DeleteRe
 		resp.Diagnostics.AddError("Shared-folder deletion is protected", "Deleting a shared folder destroys its files. To stop managing it, use a removed block with destroy=false. Intentional deletion requires disabling deletion_protection in a separate apply.")
 		return
 	}
-	_, err := r.client.Share(ctx, m.Name.ValueString())
+	current, err := r.client.Share(ctx, m.Name.ValueString())
 	if errors.Is(err, dsm.ErrNotFound) {
 		return
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot verify shared-folder identity", err.Error())
+		return
+	}
+	if m.UUID.IsNull() || m.UUID.ValueString() == "" || current.UUID != m.UUID.ValueString() {
+		resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to delete an unverified or replacement folder.")
 		return
 	}
 	if err := r.client.DeleteShare(ctx, m.Name.ValueString()); err != nil {
