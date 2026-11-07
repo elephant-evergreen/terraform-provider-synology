@@ -6,6 +6,6 @@ go build -o work/.go-licenses github.com/google/go-licenses/v2
   printf '%s\n\n' 'Third-party software included in release executables. Source versions and license texts follow.'
   printf '%s\n\n' "Go $(go env GOVERSION) standard library and runtime; https://go.dev/LICENSE"
   cat "$(go env GOROOT)/LICENSE"
-  GOOS=linux GOARCH=amd64 work/.go-licenses report . --ignore=github.com/elephant-evergreen/terraform-provider-synology --template=templates/licenses.tmpl
+  GOOS=linux GOARCH=amd64 work/.go-licenses report . --ignore=github.com/elephant-evergreen/terraform-provider-synology --template=bin/licenses.tmpl
 } > work/.licenses.txt
 mv work/.licenses.txt THIRD_PARTY_LICENSES.txt
