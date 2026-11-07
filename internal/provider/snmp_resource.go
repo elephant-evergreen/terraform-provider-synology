@@ -32,7 +32,7 @@ var snmpSecrets = []snmpSecret{
 func NewSNMPResource() resource.Resource {
 	return &snmpResource{serviceResource: serviceResource{definition: serviceDefinition{
 		name: "snmp", api: "SYNO.Core.SNMP", version: 1,
-		description: "SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy releases management without changing DSM. Protocol settings are available only while the corresponding service is active.",
+		description: "SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy never changes DSM. Applied secret-generation baselines are protected; release them explicitly with a removed block using destroy = false. Protocol settings are available only while the corresponding service is active.",
 		fields: map[string]serviceField{
 			"enabled":          {"enable_snmp", types.BoolType, "Enable the SNMP service."},
 			"v1_v2_enabled":    {"enable_snmp_v1v2", types.BoolType, "Enable SNMP v1/v2c."},
@@ -371,6 +371,14 @@ func (*snmpResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("reconciliation_required"), &pending)...)
 	if pending.ValueBool() {
 		resp.Diagnostics.AddError("SNMP secret write requires reconciliation", snmpReconciliationMessage)
+	}
+	versions, d := snmpVersions(ctx, req.State)
+	resp.Diagnostics.Append(d...)
+	for _, version := range versions {
+		if version > 0 {
+			resp.Diagnostics.AddError("SNMP secret generation state is protected", "Releasing this state could turn an unchanged generation into a new rotation during re-import. Inspect DSM and undo replacement or untaint the confirmed resource before replanning. To intentionally release management, use a removed block with destroy = false and reconcile secret versions explicitly before a future import.")
+			break
+		}
 	}
 }
 

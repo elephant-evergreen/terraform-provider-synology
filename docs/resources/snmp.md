@@ -3,12 +3,12 @@
 page_title: "synology_snmp Resource - synology"
 subcategory: ""
 description: |-
-  SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy releases management without changing DSM. Protocol settings are available only while the corresponding service is active.
+  SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy never changes DSM. Applied secret-generation baselines are protected; release them explicitly with a removed block using destroy = false. Protocol settings are available only while the corresponding service is active.
 ---
 
 # synology_snmp (Resource)
 
-SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy releases management without changing DSM. Protocol settings are available only while the corresponding service is active.
+SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy never changes DSM. Applied secret-generation baselines are protected; release them explicitly with a removed block using destroy = false. Protocol settings are available only while the corresponding service is active.
 
 ## Example Usage
 

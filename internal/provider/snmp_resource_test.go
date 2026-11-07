@@ -177,6 +177,14 @@ func TestAccSNMPLifecycle(t *testing.T) {
 		}},
 		{Config: config(v3), Check: check(4)},
 		{Config: config(disabled + "\ncommunity_version=1\nauthentication_password_version=1\nprivacy_password_version=1"), Check: check(5)},
+		{Config: config("")[:strings.Index(config(""), "resource ")] + "removed {\nfrom=synology_snmp.test\nlifecycle { destroy=false }\n}\n", Check: func(_ *terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.writes != 5 || f.settings["enable_snmp"] != false || f.passwordWrites != 1 || f.privacyWrites != 1 || f.settings["location"] != "external-location" {
+				return fmt.Errorf("explicit management release changed settings or replayed secrets")
+			}
+			return nil
+		}},
 	}})
 }
 
@@ -271,7 +279,8 @@ func TestAccSNMPSecretCreateRequiresImportInBothReplacementOrders(t *testing.T) 
 						t.Fatal("Create wrote before import")
 					}
 				}},
-				{Config: config(true, false), Taint: []string{"synology_snmp.test"}, ExpectError: regexp.MustCompile("SNMP secret changes require import")},
+				{Config: config(true, true), Taint: []string{"synology_snmp.test"}, ExpectError: regexp.MustCompile("SNMP secret changes require import|SNMP secret generation state is protected")},
+				{Config: config(true, true), ExpectError: regexp.MustCompile("SNMP secret changes require import|SNMP secret generation state is protected")},
 				{Config: prefix + "removed {\nfrom=synology_snmp.test\nlifecycle {\ndestroy=false\n}\n}\n"},
 				{Config: config(false, true)},
 			}})
@@ -296,6 +305,14 @@ func TestAccSNMPAcknowledgedUpdateReadFailureDoesNotReplay(t *testing.T) {
 		{Config: disabled},
 		{Config: configured, ExpectError: regexp.MustCompile("Cannot update SNMP"), PreConfig: func() { f.mu.Lock(); f.failReadAfterWrite = true; f.mu.Unlock() }},
 		{Config: configured, PreConfig: func() { f.mu.Lock(); f.failReadAfterWrite = false; f.mu.Unlock() }, Check: resource.TestCheckResourceAttr("synology_snmp.test", "authentication_password_version", "1")},
+		{Config: prefix + "removed {\nfrom=synology_snmp.test\nlifecycle { destroy=false }\n}\n", Check: func(_ *terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.writes != 1 || f.passwordWrites != 1 {
+				return fmt.Errorf("acknowledged update was replayed")
+			}
+			return nil
+		}},
 	}})
 }
 

@@ -12,7 +12,7 @@ The intended Registry source is `elephant-evergreen/synology`. Once a verified r
 
 Use ordinary Terraform import blocks and review the resulting plan before applying it. An adoption plan must contain imports and zero creates, updates, replacements or deletions. Configuration and account information enter state; passwords and transient DSM sessions must not.
 
-For SNMP adoption and explicit secret changes, see the [SNMP guide](docs/guides/snmp.md). Import leaves community and v3 passwords unchanged; unreadable secrets cannot be drift-detected.
+For SNMP adoption and explicit secret changes, see the [SNMP guide](docs/guides/snmp.md). Import leaves community and v3 passwords unchanged; unreadable secrets cannot be drift-detected. Applied SNMP secret versions protect their state from Destroy; release management explicitly with a removed block using destroy = false.
 
 ## Development
 
