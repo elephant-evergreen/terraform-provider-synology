@@ -25,11 +25,12 @@ type serviceField struct {
 	description string
 }
 type serviceDefinition struct {
-	name        string
-	api         string
-	version     int
-	description string
-	fields      map[string]serviceField
+	name           string
+	api            string
+	version        int
+	description    string
+	fields         map[string]serviceField
+	retainedFields map[string]attr.Type
 }
 type serviceResource struct {
 	definition serviceDefinition
@@ -67,6 +68,26 @@ func serviceResources() []func() resource.Resource {
 		service(serviceDefinition{name: "sftp", api: "SYNO.Core.FileServ.FTP.SFTP", version: 1, description: "SFTP file-sharing configuration. SSH terminal access remains a separate setting.", fields: map[string]serviceField{
 			"enabled": {"enable", types.BoolType, "Enable SFTP."}, "port": {"portnum", types.Int64Type, "SFTP listening port."},
 		}}),
+		service(serviceDefinition{name: "terminal", api: "SYNO.Core.Terminal", version: 3, retainedFields: map[string]attr.Type{"ssh_port": types.Int64Type, "forbid_console": types.BoolType}, description: "SSH and Telnet terminal-access policy. This resource does not change listening ports or SSH cryptographic algorithms. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
+			"ssh_enabled":    {"enable_ssh", types.BoolType, "Allow SSH terminal connections. SFTP has a separate service policy."},
+			"telnet_enabled": {"enable_telnet", types.BoolType, "Allow unencrypted Telnet terminal connections."},
+		}}),
+		service(serviceDefinition{name: "rsync", api: "SYNO.Backup.Service.NetworkBackup", version: 1, retainedFields: map[string]attr.Type{"rsync_sshd_port": types.Int64Type}, description: "Rsync network-backup service policy. Account credentials, custom configuration and SSH port settings remain outside this resource. Destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
+			"enabled":          {"enable", types.BoolType, "Enable the rsync network-backup service."},
+			"accounts_enabled": {"enable_rsync_account", types.BoolType, "Enable rsync-specific accounts. This does not create or rotate account credentials."},
+		}}),
+		service(serviceDefinition{name: "windows_discovery", api: "SYNO.Core.FileServ.ServiceDiscovery.WSTransfer", version: 1, description: "Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it; reference synology_smb.enabled to establish matching policy and ordering. Destroy leaves discovery unchanged.", fields: map[string]serviceField{
+			"enabled": {"enable_wstransfer", types.BoolType, "Advertise the NAS through Windows WS-Discovery."},
+		}}),
+		service(serviceDefinition{name: "file_transfer_logging", api: "SYNO.Core.SyslogClient.FileTransfer", version: 1, description: "Per-protocol file-transfer logging policy. Log contents, retention and detailed operation filters remain outside this resource. Omitted flags preserve their current values; destroy leaves logging enabled or disabled as configured on DSM.", fields: map[string]serviceField{
+			"smb_enabled":          {"cifs", types.BoolType, "Record SMB file-transfer activity."},
+			"afp_enabled":          {"afp", types.BoolType, "Record AFP file-transfer activity."},
+			"ftp_enabled":          {"ftp", types.BoolType, "Record FTP file-transfer activity."},
+			"tftp_enabled":         {"tftp", types.BoolType, "Record TFTP file-transfer activity."},
+			"webdav_enabled":       {"webdav", types.BoolType, "Record WebDAV file-transfer activity."},
+			"file_station_enabled": {"filestation", types.BoolType, "Record File Station file-transfer activity."},
+		}}),
+
 		service(serviceDefinition{name: "time", api: "SYNO.Core.Region.NTP", version: 2, description: "DSM NTP and time-zone configuration. This resource never sets the wall clock directly. Synchronization success depends on the NAS network policy.", fields: map[string]serviceField{
 			"synchronization": {"enable_ntp", types.StringType, "DSM synchronization mode; ntp enables NTP."}, "ntp_server": {"server", types.StringType, "NTP server name."}, "timezone": {"timezone", types.StringType, "DSM time-zone identifier, such as Seoul."}, "date_format": {"date_format", types.StringType, "DSM date display format."}, "time_format": {"time_format", types.StringType, "DSM time display format."},
 		}}),
@@ -101,41 +122,76 @@ func (r *serviceResource) Configure(_ context.Context, req resource.ConfigureReq
 	}
 	r.client = c
 }
-func (r *serviceResource) read(ctx context.Context) (types.Object, error) {
+func (r *serviceResource) readSettings(ctx context.Context) (types.Object, url.Values, error) {
 	var raw map[string]json.RawMessage
 	if err := r.client.Call(ctx, r.definition.api, r.definition.version, "get", nil, &raw); err != nil {
-		return types.Object{}, err
+		return types.Object{}, nil, err
 	}
 	values := map[string]attr.Value{"id": types.StringValue(r.definition.name)}
 	kinds := map[string]attr.Type{"id": types.StringType}
 	for name, field := range r.definition.fields {
 		value, ok := raw[field.wire]
 		if !ok || string(value) == "null" {
-			return types.Object{}, fmt.Errorf("DSM %s response is missing the managed %s setting", r.definition.name, name)
+			return types.Object{}, nil, fmt.Errorf("DSM %s response is missing the managed %s setting", r.definition.name, name)
 		}
 		kinds[name] = field.kind
 		switch field.kind {
 		case types.BoolType:
 			var v bool
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
+				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
 			}
 			values[name] = types.BoolValue(v)
 		case types.Int64Type:
 			var v int64
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
+				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
 			}
 			values[name] = types.Int64Value(v)
 		case types.StringType:
 			var v string
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
+				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
 			}
 			values[name] = types.StringValue(v)
 		}
 	}
-	return types.ObjectValueMust(kinds, values), nil
+	retained := url.Values{}
+	for wire, kind := range r.definition.retainedFields {
+		value := raw[wire]
+		if len(value) == 0 || string(value) == "null" {
+			return types.Object{}, nil, fmt.Errorf("DSM %s response is missing a setting required to preserve configuration", r.definition.name)
+		}
+		switch kind {
+		case types.BoolType:
+			var v bool
+			if err := json.Unmarshal(value, &v); err != nil {
+				return types.Object{}, nil, fmt.Errorf("DSM %s retained flag has the wrong type", r.definition.name)
+			}
+			retained.Set(wire, strconv.FormatBool(v))
+		case types.Int64Type:
+			var text string
+			if err := json.Unmarshal(value, &text); err != nil {
+				var v int64
+				if err := json.Unmarshal(value, &v); err != nil {
+					return types.Object{}, nil, fmt.Errorf("DSM %s retained port is malformed", r.definition.name)
+				}
+				text = strconv.FormatInt(v, 10)
+			}
+			port, err := strconv.ParseInt(text, 10, 64)
+			if err != nil || port < 1 || port > 65535 {
+				return types.Object{}, nil, fmt.Errorf("DSM %s retained port is invalid", r.definition.name)
+			}
+			retained.Set(wire, strconv.FormatInt(port, 10))
+		default:
+			return types.Object{}, nil, fmt.Errorf("unsupported retained setting type")
+		}
+	}
+	return types.ObjectValueMust(kinds, values), retained, nil
+}
+func (r *serviceResource) read(ctx context.Context) (types.Object, error) {
+	actual, _, err := r.readSettings(ctx)
+	return actual, err
 }
 func (r *serviceResource) desired(ctx context.Context, config tfsdk.Config) (map[string]attr.Value, url.Values, error) {
 	values := map[string]attr.Value{}
@@ -195,16 +251,32 @@ func (r *serviceResource) apply(ctx context.Context, config tfsdk.Config) (types
 	if err != nil {
 		return types.Object{}, err
 	}
-	actual, err := r.read(ctx)
+	var actual types.Object
+	changed := false
+	err = r.client.MutateAfterRead(ctx, r.definition.api, r.definition.version, "set", func() (url.Values, error) {
+		var retained url.Values
+		actual, retained, err = r.readSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if serviceMatches(actual, desired) {
+			return nil, nil
+		}
+		for key, values := range retained {
+			if !args.Has(key) {
+				args[key] = values
+			}
+		}
+		changed = true
+		return args, nil
+	})
 	if err != nil {
 		return types.Object{}, err
 	}
-	if serviceMatches(actual, desired) {
+	if !changed {
 		return actual, nil
 	}
-	if err := r.client.Mutate(ctx, r.definition.api, r.definition.version, "set", args); err != nil {
-		return types.Object{}, err
-	}
+
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	for {

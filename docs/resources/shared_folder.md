@@ -14,12 +14,13 @@ Own shared-folder metadata while preserving file contents and unmanaged permissi
 
 ```terraform
 resource "synology_shared_folder" "archive" {
-  name                   = "archive"
-  volume                 = "/volume1"
-  description            = "Shared archive"
-  recycle_bin            = true
-  recycle_bin_admin_only = true
-  deletion_protection    = true
+  name                    = "archive"
+  volume                  = "/volume1"
+  description             = "Shared archive"
+  hide_unauthorized_files = true
+  recycle_bin             = true
+  recycle_bin_admin_only  = true
+  deletion_protection     = true
 
   lifecycle {
     prevent_destroy = true
@@ -40,6 +41,7 @@ resource "synology_shared_folder" "archive" {
 - `deletion_protection` (Boolean) Reject deletion using the last applied protection value, even if the resource is removed from configuration. Disable in a separate apply before deletion. Prefer a removed block with destroy=false to stop managing data.
 - `description` (String) Shared-folder description. An empty string clears it.
 - `hidden` (Boolean) Hide the share from network browsing.
+- `hide_unauthorized_files` (Boolean) Hide files and subfolders from users without permission. This differs from hiding the share itself. Omit to preserve the existing value or use the DSM default for a new share.
 - `recycle_bin` (Boolean) Enable the shared-folder recycle bin. Changing this does not empty the recycle bin.
 - `recycle_bin_admin_only` (Boolean) Restrict recycle-bin access to administrators.
 

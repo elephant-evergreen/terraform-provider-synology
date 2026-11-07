@@ -1,6 +1,6 @@
 # Terraform Provider for Synology
 
-Manage DSM shared folders, local accounts, groups, explicit share permissions, file-sharing services and time settings using typed Terraform resources and direct HTTPS communication.
+Manage DSM shared folders, local accounts, groups, explicit share permissions, file-sharing services, transfer logging, discovery, terminal access and time settings using typed Terraform resources and direct HTTPS communication.
 
 The provider is under development. A GitHub repository or successful fixture test does not establish Registry availability or hardware lifecycle compatibility. See [compatibility](docs/compatibility.md), [design](docs/design.md) and [verification boundaries](docs/testing.md).
 

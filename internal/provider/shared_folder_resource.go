@@ -22,14 +22,15 @@ var _ resource.ResourceWithValidateConfig = (*sharedFolderResource)(nil)
 
 type sharedFolderResource struct{ client *dsm.Client }
 type shareModel struct {
-	Name                types.String `tfsdk:"name"`
-	Volume              types.String `tfsdk:"volume"`
-	Description         types.String `tfsdk:"description"`
-	UUID                types.String `tfsdk:"uuid"`
-	Hidden              types.Bool   `tfsdk:"hidden"`
-	RecycleBin          types.Bool   `tfsdk:"recycle_bin"`
-	RecycleBinAdminOnly types.Bool   `tfsdk:"recycle_bin_admin_only"`
-	DeletionProtection  types.Bool   `tfsdk:"deletion_protection"`
+	Name                  types.String `tfsdk:"name"`
+	Volume                types.String `tfsdk:"volume"`
+	Description           types.String `tfsdk:"description"`
+	UUID                  types.String `tfsdk:"uuid"`
+	Hidden                types.Bool   `tfsdk:"hidden"`
+	HideUnauthorizedFiles types.Bool   `tfsdk:"hide_unauthorized_files"`
+	RecycleBin            types.Bool   `tfsdk:"recycle_bin"`
+	RecycleBinAdminOnly   types.Bool   `tfsdk:"recycle_bin_admin_only"`
+	DeletionProtection    types.Bool   `tfsdk:"deletion_protection"`
 }
 
 func NewSharedFolderResource() resource.Resource { return &sharedFolderResource{} }
@@ -38,14 +39,15 @@ func (*sharedFolderResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 func (*sharedFolderResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{MarkdownDescription: "Own shared-folder metadata while preserving file contents and unmanaged permissions. Import by name. Renaming or moving a shared folder is deliberately unsupported; these changes must never silently replace stored data.", Attributes: map[string]schema.Attribute{
-		"name":                   schema.StringAttribute{Required: true, MarkdownDescription: "DSM shared-folder name and import identifier. Changing it requires replacement; protection rejects deletion.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"volume":                 schema.StringAttribute{Required: true, MarkdownDescription: "Existing volume path, for example /volume1. The provider does not create or reformat storage.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"description":            schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), MarkdownDescription: "Shared-folder description. An empty string clears it."},
-		"uuid":                   schema.StringAttribute{Computed: true, MarkdownDescription: "DSM shared-folder UUID, when exposed by the device.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-		"hidden":                 schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Hide the share from network browsing."},
-		"recycle_bin":            schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Enable the shared-folder recycle bin. Changing this does not empty the recycle bin."},
-		"recycle_bin_admin_only": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Restrict recycle-bin access to administrators."},
-		"deletion_protection":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Reject deletion using the last applied protection value, even if the resource is removed from configuration. Disable in a separate apply before deletion. Prefer a removed block with destroy=false to stop managing data."},
+		"name":                    schema.StringAttribute{Required: true, MarkdownDescription: "DSM shared-folder name and import identifier. Changing it requires replacement; protection rejects deletion.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"volume":                  schema.StringAttribute{Required: true, MarkdownDescription: "Existing volume path, for example /volume1. The provider does not create or reformat storage.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"description":             schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), MarkdownDescription: "Shared-folder description. An empty string clears it."},
+		"uuid":                    schema.StringAttribute{Computed: true, MarkdownDescription: "DSM shared-folder UUID, when exposed by the device.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"hidden":                  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Hide the share from network browsing."},
+		"hide_unauthorized_files": schema.BoolAttribute{Optional: true, Computed: true, MarkdownDescription: "Hide files and subfolders from users without permission. This differs from hiding the share itself. Omit to preserve the existing value or use the DSM default for a new share."},
+		"recycle_bin":             schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Enable the shared-folder recycle bin. Changing this does not empty the recycle bin."},
+		"recycle_bin_admin_only":  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Restrict recycle-bin access to administrators."},
+		"deletion_protection":     schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), MarkdownDescription: "Reject deletion using the last applied protection value, even if the resource is removed from configuration. Disable in a separate apply before deletion. Prefer a removed block with destroy=false to stop managing data."},
 	}}
 }
 func (r *sharedFolderResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -73,7 +75,12 @@ func (*sharedFolderResource) ValidateConfig(ctx context.Context, req resource.Va
 	}
 }
 func (m *shareModel) object() dsm.Share {
-	return dsm.Share{Name: m.Name.ValueString(), Volume: m.Volume.ValueString(), Description: m.Description.ValueString(), Hidden: m.Hidden.ValueBool(), RecycleBin: m.RecycleBin.ValueBool(), RecycleBinAdminOnly: m.RecycleBinAdminOnly.ValueBool()}
+	s := dsm.Share{Name: m.Name.ValueString(), Volume: m.Volume.ValueString(), Description: m.Description.ValueString(), Hidden: m.Hidden.ValueBool(), RecycleBin: m.RecycleBin.ValueBool(), RecycleBinAdminOnly: m.RecycleBinAdminOnly.ValueBool()}
+	if !m.HideUnauthorizedFiles.IsNull() && !m.HideUnauthorizedFiles.IsUnknown() {
+		value := m.HideUnauthorizedFiles.ValueBool()
+		s.HideUnreadable = &value
+	}
+	return s
 }
 func (m *shareModel) read(s dsm.Share) {
 	m.Name = types.StringValue(s.Name)
@@ -81,6 +88,7 @@ func (m *shareModel) read(s dsm.Share) {
 	m.Description = types.StringValue(s.Description)
 	m.UUID = types.StringValue(s.UUID)
 	m.Hidden = types.BoolValue(s.Hidden)
+	m.HideUnauthorizedFiles = types.BoolValue(*s.HideUnreadable)
 	m.RecycleBin = types.BoolValue(s.RecycleBin)
 	m.RecycleBinAdminOnly = types.BoolValue(s.RecycleBinAdminOnly)
 	if m.DeletionProtection.IsNull() || m.DeletionProtection.IsUnknown() {
@@ -106,6 +114,9 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 	if err != nil {
 		if !rejectedCreation(err) {
 			m.UUID = types.StringNull()
+			if m.HideUnauthorizedFiles.IsUnknown() {
+				m.HideUnauthorizedFiles = types.BoolNull()
+			}
 			resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 			resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"uncertain"`))...)
 		}
@@ -113,6 +124,9 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	m.UUID = types.StringNull()
+	if m.HideUnauthorizedFiles.IsUnknown() {
+		m.HideUnauthorizedFiles = types.BoolNull()
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	resp.Diagnostics.Append(resp.Private.SetKey(ctx, "creation_outcome", []byte(`"unbound"`))...)
 	actual, readErr := r.client.Share(ctx, m.Name.ValueString())
@@ -123,6 +137,9 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 	}
 	if readErr != nil {
 		m.UUID = types.StringNull()
+		if m.HideUnauthorizedFiles.IsUnknown() {
+			m.HideUnauthorizedFiles = types.BoolNull()
+		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 		resp.Diagnostics.AddError("Shared folder created but readback failed", readErr.Error())
 	}
@@ -177,7 +194,8 @@ func (r *sharedFolderResource) Update(ctx context.Context, req resource.UpdateRe
 		resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to update an unverified or replacement folder. Refresh and explicitly reconcile its identity.")
 		return
 	}
-	if plan.object() != state.object() {
+	visibilityChanged := !plan.HideUnauthorizedFiles.IsNull() && !plan.HideUnauthorizedFiles.IsUnknown() && !plan.HideUnauthorizedFiles.Equal(state.HideUnauthorizedFiles)
+	if visibilityChanged || !plan.Description.Equal(state.Description) || !plan.Hidden.Equal(state.Hidden) || !plan.RecycleBin.Equal(state.RecycleBin) || !plan.RecycleBinAdminOnly.Equal(state.RecycleBinAdminOnly) {
 		if err := r.client.WriteShare(ctx, "set", plan.object()); err != nil {
 			resp.Diagnostics.AddError("Cannot update shared folder", err.Error())
 			return

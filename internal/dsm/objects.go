@@ -17,6 +17,7 @@ type Share struct {
 	Volume              string `json:"vol_path"`
 	UUID                string `json:"uuid"`
 	Hidden              bool   `json:"hidden"`
+	HideUnreadable      *bool  `json:"hide_unreadable"`
 	RecycleBin          bool   `json:"enable_recycle_bin"`
 	RecycleBinAdminOnly bool   `json:"recycle_bin_admin_only"`
 }
@@ -41,7 +42,7 @@ func (c *Client) Shares(ctx context.Context) ([]Share, error) {
 		Shares []Share `json:"shares"`
 		Total  *int    `json:"total"`
 	}
-	err := c.Call(ctx, "SYNO.Core.Share", 1, "list", url.Values{"shareType": {"all"}, "additional": {`["hidden","recyclebin"]`}}, &data)
+	err := c.Call(ctx, "SYNO.Core.Share", 1, "list", url.Values{"shareType": {"all"}, "additional": {`["hidden","recyclebin","advance_setting"]`}}, &data)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func (c *Client) Share(ctx context.Context, name string) (Share, error) {
 	for _, s := range shares {
 		if s.Name == name {
 			var raw json.RawMessage
-			err = c.Call(ctx, "SYNO.Core.Share", 1, "get", url.Values{"name": {name}, "additional": {`["hidden","recyclebin"]`}}, &raw)
+			err = c.Call(ctx, "SYNO.Core.Share", 1, "get", url.Values{"name": {name}, "additional": {`["hidden","recyclebin","advance_setting"]`}}, &raw)
 			if err != nil {
 				return Share{}, err
 			}
@@ -95,7 +96,7 @@ func (c *Client) Share(ctx context.Context, name string) (Share, error) {
 			if err := requireStrings(fields, "name", "vol_path", "uuid", "desc"); err != nil {
 				return Share{}, err
 			}
-			for _, field := range []string{"hidden", "enable_recycle_bin", "recycle_bin_admin_only"} {
+			for _, field := range []string{"hidden", "hide_unreadable", "enable_recycle_bin", "recycle_bin_admin_only"} {
 				var value bool
 				if bytes.Equal(bytes.TrimSpace(fields[field]), []byte("null")) || json.Unmarshal(fields[field], &value) != nil {
 					return Share{}, errors.New("DSM shared-folder metadata is missing a managed boolean")
@@ -112,6 +113,9 @@ func (c *Client) WriteShare(ctx context.Context, method string, s Share) error {
 		return errors.New("unsupported shared-folder mutation")
 	}
 	info := map[string]any{"name": s.Name, "desc": s.Description, "hidden": s.Hidden, "enable_recycle_bin": s.RecycleBin, "recycle_bin_admin_only": s.RecycleBinAdminOnly}
+	if s.HideUnreadable != nil {
+		info["hide_unreadable"] = *s.HideUnreadable
+	}
 	if method == "create" {
 		info["vol_path"] = s.Volume
 	}
