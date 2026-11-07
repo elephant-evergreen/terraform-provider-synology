@@ -24,6 +24,9 @@ jobs:
           terraform_version: '1.17.1'
           terraform_wrapper: false
       - run: bin/check-for-agent
+      - run: go tool govulncheck ./...
+      - run: bin/generate-licenses
+      - run: git diff --exit-code -- THIRD_PARTY_LICENSES.txt
       - name: Import release signing key
         id: signing
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd

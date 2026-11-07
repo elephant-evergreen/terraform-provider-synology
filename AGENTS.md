@@ -5,7 +5,7 @@
 - Model DSM objects with typed resources. Do not expose generic API calls, shell execution, or a configuration document resource.
 - Import, refresh, discovery, and planning must not change DSM configuration or user files. Authentication sessions are transient.
 - Refresh every managed readable attribute. Fail on authentication, transport, permission, malformed-response, and unsupported-version errors; only confirmed absence removes an object from state.
-- Never recreate an existing object to adopt it. Reject name collisions with an actionable import diagnostic.
+- Never recreate an existing named object to adopt it. Reject name collisions with an actionable import diagnostic. Service singletons and complete permission policies apply declared settings on Create; import adopts without changing them.
 - Keep data-bearing objects protected by default. Never delete, move, or rewrite user files as a side effect of configuration updates.
 - Do not claim atomic rollback that DSM does not provide. Preserve identity after partial creation and expose uncertain outcomes for reconciliation.
 - Keep resource passwords write-only, enforce verified HTTPS, reject redirects, and redact credentials, response bodies, and session tokens from logs and errors.

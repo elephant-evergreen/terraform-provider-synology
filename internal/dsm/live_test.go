@@ -30,6 +30,9 @@ func TestLiveReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range shares {
+		if _, err := c.AccessPolicy(ctx, s.Name); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := c.Share(ctx, s.Name); err != nil {
 			t.Fatal(err)
 		}

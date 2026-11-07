@@ -75,12 +75,12 @@ resource "synology_sftp" "test" {
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, CheckDestroy: func(_ *terraform.State) error {
 		mu.Lock()
 		defer mu.Unlock()
-		if settings["enable"] != true || settings["portnum"] != 22 || settings["unmanaged_future_setting"] != "preserved" {
+		if settings["enable"] != false || settings["portnum"] != 22 || settings["unmanaged_future_setting"] != "preserved" {
 			return fmt.Errorf("service destroy or update changed an unmanaged setting")
 		}
 		return nil
 	}, Steps: []resource.TestStep{
-		{Config: config(false), Check: resource.TestCheckResourceAttr("synology_sftp.test", "port", "22")},
+		{Config: config(true), Check: resource.TestCheckResourceAttr("synology_sftp.test", "port", "22")},
 		{ResourceName: "synology_sftp.test", ImportState: true, ImportStateId: "sftp", ImportStateVerify: true, PreConfig: func() { mu.Lock(); beforeImport = writes; mu.Unlock() }, ImportStateCheck: func(_ []*terraform.InstanceState) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -89,9 +89,9 @@ resource "synology_sftp" "test" {
 			}
 			return nil
 		}},
-		{Config: config(true), Check: resource.TestCheckResourceAttr("synology_sftp.test", "enabled", "true")},
-		{Config: config(true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() { mu.Lock(); settings["enable"] = false; mu.Unlock() }},
-		{Config: config(true)},
+		{Config: config(false), Check: resource.TestCheckResourceAttr("synology_sftp.test", "enabled", "false")},
+		{Config: config(false), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() { mu.Lock(); settings["enable"] = true; mu.Unlock() }},
+		{Config: config(false)},
 	}})
 }
 

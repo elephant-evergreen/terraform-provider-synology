@@ -37,13 +37,20 @@ func TestProviderSchema(t *testing.T) {
 }
 
 type fixture struct {
-	mu          sync.Mutex
-	shares      map[string]map[string]any
-	users       map[string]map[string]any
-	groups      map[string]map[string]any
-	permissions map[string]map[string]any
-	writes      int
-	reads       int
+	mu                     sync.Mutex
+	shares                 map[string]map[string]any
+	users                  map[string]map[string]any
+	groups                 map[string]map[string]any
+	permissions            map[string]map[string]any
+	createMode             string
+	createAPI              string
+	createObserved         bool
+	failMembership         bool
+	failUserReadAfterSet   bool
+	userUpdateAcknowledged bool
+	passwordWrites         int
+	writes                 int
+	reads                  int
 }
 
 func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +61,40 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api, method := r.Form.Get("api"), r.Form.Get("method")
+	if api == "SYNO.Core.User" && method == "list" && f.userUpdateAcknowledged && f.failUserReadAfterSet {
+		w.WriteHeader(503)
+		return
+	}
+	if api == "SYNO.Core.User.Group" && method == "join" && f.failMembership {
+		w.WriteHeader(503)
+		return
+	}
+
+	if f.createObserved && f.createMode == "read_failure" && (method == "get" || method == "list") {
+		w.WriteHeader(503)
+		return
+	}
+	if method == "create" && api == f.createAPI {
+		f.createObserved = true
+		if f.createMode == "reject" || f.createMode == "uncertain" {
+			f.writes++
+			name := r.Form.Get("name")
+			switch api {
+			case "SYNO.Core.Share":
+				f.shares[name] = map[string]any{"name": name, "uuid": "foreign-folder", "vol_path": "/volume1", "desc": "foreign", "hidden": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}
+			case "SYNO.Core.Group":
+				f.groups[name] = map[string]any{"name": name, "gid": 9001, "description": "foreign"}
+			case "SYNO.Core.User":
+				f.users[name] = map[string]any{"name": name, "uid": 9001, "description": "foreign", "email": "", "expired": "normal", "groups": []string{"users"}}
+			}
+			if f.createMode == "uncertain" {
+				w.WriteHeader(502)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": map[string]any{"code": 3301}})
+			return
+		}
+	}
 	var data any = map[string]any{}
 	switch api {
 	case "SYNO.API.Info":
@@ -164,6 +205,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			name := r.Form.Get("name")
 			f.users[name] = map[string]any{"name": name, "uid": 1027, "description": r.Form.Get("description"), "email": r.Form.Get("email"), "expired": r.Form.Get("expired"), "groups": []string{"users"}, "unmanaged_future_setting": "preserved"}
 		case "set":
+			f.userUpdateAcknowledged = true
+			if r.Form.Get("password") != "" {
+				f.passwordWrites++
+			}
 			f.writes++
 			u := f.users[r.Form.Get("name")]
 			for _, key := range []string{"description", "email", "expired"} {
@@ -245,7 +290,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestAccAccountsAndPermissions(t *testing.T) {
-	f := &fixture{shares: map[string]map[string]any{}, users: map[string]map[string]any{}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}}, permissions: map[string]map[string]any{}}
+	f := &fixture{shares: map[string]map[string]any{}, users: map[string]map[string]any{}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "administrators": {"name": "administrators", "gid": 101, "description": "System default admin group"}}, permissions: map[string]map[string]any{}}
 	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	defer server.Close()
 	ca := filepath.Join(t.TempDir(), "ca.pem")
@@ -276,14 +321,16 @@ resource "synology_user" "test" {
  password_version = 1
  deletion_protection = %t
 }
-resource "synology_share_permission" "test" {
+resource "synology_share_permissions" "test" {
+ depends_on = [synology_user.test]
  share = synology_shared_folder.test.name
- principal_type = "local_group"
- principal = synology_group.test.name
- access = "read_write"
- deletion_protection = %t
+ users = {}
+ groups = {
+   administrators = "read_write"
+   (synology_group.test.name) = "read_write"
+ }
 }
-`, server.URL, ca, protect, description, protect, description, protect, protect)
+`, server.URL, ca, protect, description, protect, description, protect)
 	}
 	secretCheck := func(s *terraform.State) error {
 		for _, r := range s.RootModule().Resources {
@@ -298,15 +345,15 @@ resource "synology_share_permission" "test" {
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, CheckDestroy: func(_ *terraform.State) error {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if len(f.users) != 0 || len(f.shares) != 0 || len(f.groups) != 1 {
+		if len(f.users) != 0 || len(f.shares) != 0 || len(f.groups) != 2 {
 			return fmt.Errorf("custom objects remain after destroy")
 		}
 		return nil
 	}, Steps: []resource.TestStep{
-		{Config: config("initial", true), Check: resource.ComposeAggregateTestCheckFunc(secretCheck, resource.TestCheckResourceAttr("synology_user.test", "groups.#", "2"), resource.TestCheckResourceAttr("synology_share_permission.test", "access", "read_write"))},
+		{Config: config("initial", true), Check: resource.ComposeAggregateTestCheckFunc(secretCheck, resource.TestCheckResourceAttr("synology_user.test", "groups.#", "2"), resource.TestCheckResourceAttr("synology_share_permissions.test", "groups.fixture-group", "read_write"))},
 		{ResourceName: "synology_group.test", ImportState: true, ImportStateId: "fixture-group", ImportStateVerify: true, ImportStateVerifyIdentifierAttribute: "name"},
 		{ResourceName: "synology_user.test", ImportState: true, ImportStateId: "fixture-account", ImportStateVerify: true, ImportStateVerifyIdentifierAttribute: "name", ImportStateVerifyIgnore: []string{"password_version"}},
-		{ResourceName: "synology_share_permission.test", ImportState: true, ImportStateId: "fixture:local_group:fixture-group", ImportStateVerify: true, ImportStateVerifyIdentifierAttribute: "principal"},
+		{ResourceName: "synology_share_permissions.test", ImportState: true, ImportStateId: "fixture", ImportStateVerify: true, ImportStateVerifyIdentifierAttribute: "share"},
 		{Config: config("updated", true), Check: secretCheck},
 		{Config: config("updated", true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() {
 			f.mu.Lock()
@@ -371,4 +418,47 @@ resource "synology_shared_folder" "test" {
 			{Config: config("updated", false), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
 		},
 	})
+}
+
+func TestAccUserOmittedMembershipPreservesExistingGroups(t *testing.T) {
+	f := &fixture{shares: map[string]map[string]any{}, users: map[string]map[string]any{}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "readers": {"name": "readers", "gid": 1001, "description": "Archive readers"}}, permissions: map[string]map[string]any{}}
+	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
+	defer server.Close()
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := func(description string) string {
+		return fmt.Sprintf(`
+provider "synology" {
+ endpoint = %q
+ ca_file = %q
+ username = "fixture-user"
+ password = "fixture-provider-password"
+}
+resource "synology_user" "test" {
+ name = "fixture-account"
+ description = %q
+ password_wo = "fixture-account-password"
+ password_version = 1
+ deletion_protection = false
+}
+`, server.URL, ca, description)
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, CheckDestroy: func(_ *terraform.State) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.users) != 0 {
+			return fmt.Errorf("fixture user still exists")
+		}
+		return nil
+	}, Steps: []resource.TestStep{
+		{Config: config("initial"), Check: resource.TestCheckResourceAttr("synology_user.test", "groups.#", "1")},
+		{Config: config("updated"), PreConfig: func() {
+			f.mu.Lock()
+			f.users["fixture-account"]["groups"] = []string{"users", "readers"}
+			f.mu.Unlock()
+		}, Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("synology_user.test", "description", "updated"), resource.TestCheckResourceAttr("synology_user.test", "groups.#", "2"))},
+		{Config: config("updated"), PlanOnly: true},
+	}})
 }

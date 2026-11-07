@@ -1,6 +1,7 @@
 package dsm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,7 @@ func (c *Client) Shares(ctx context.Context) ([]Share, error) {
 	if err != nil {
 		return nil, err
 	}
-	if data.Shares == nil || (data.Total != nil && *data.Total != len(data.Shares)) {
+	if data.Shares == nil || data.Total == nil || *data.Total != len(data.Shares) {
 		return nil, errors.New("DSM shared-folder listing is incomplete")
 	}
 	for _, s := range data.Shares {
@@ -84,16 +85,19 @@ func (c *Client) Share(ctx context.Context, name string) (Share, error) {
 					return Share{}, errors.New("DSM returned an invalid shared folder")
 				}
 			}
-			if direct.Name != name || direct.Volume == "" {
+			if direct.Name != name || direct.Volume == "" || direct.UUID == "" {
 				return Share{}, errors.New("DSM shared-folder identity is inconsistent")
 			}
 			var fields map[string]json.RawMessage
 			if json.Unmarshal(target, &fields) != nil {
 				return Share{}, errors.New("DSM shared-folder metadata is malformed")
 			}
+			if err := requireStrings(fields, "name", "vol_path", "uuid", "desc"); err != nil {
+				return Share{}, err
+			}
 			for _, field := range []string{"hidden", "enable_recycle_bin", "recycle_bin_admin_only"} {
 				var value bool
-				if json.Unmarshal(fields[field], &value) != nil {
+				if bytes.Equal(bytes.TrimSpace(fields[field]), []byte("null")) || json.Unmarshal(fields[field], &value) != nil {
 					return Share{}, errors.New("DSM shared-folder metadata is missing a managed boolean")
 				}
 			}
@@ -120,22 +124,32 @@ func (c *Client) DeleteShare(ctx context.Context, name string) error {
 
 func (c *Client) Users(ctx context.Context) ([]User, error) {
 	var data struct {
-		Users []User `json:"users"`
-		Total *int   `json:"total"`
+		Users []json.RawMessage `json:"users"`
+		Total *int              `json:"total"`
 	}
 	err := c.Call(ctx, "SYNO.Core.User", 1, "list", url.Values{"offset": {"0"}, "limit": {"-1"}, "additional": {`["uid","description","email","expired"]`}}, &data)
 	if err != nil {
 		return nil, err
 	}
-	if data.Users == nil || (data.Total != nil && *data.Total != len(data.Users)) {
+	if data.Users == nil || data.Total == nil || *data.Total != len(data.Users) {
 		return nil, errors.New("DSM user listing is incomplete")
 	}
-	for _, u := range data.Users {
+	users := make([]User, 0, len(data.Users))
+	for _, raw := range data.Users {
+		var u User
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &u) != nil || json.Unmarshal(raw, &fields) != nil {
+			return nil, errors.New("DSM returned a malformed user")
+		}
+		if err := requireStrings(fields, "name", "description", "email", "expired"); err != nil {
+			return nil, err
+		}
 		if u.Name == "" || u.UID <= 0 || u.Expired == "" {
 			return nil, errors.New("DSM user listing is missing an identity or account state")
 		}
+		users = append(users, u)
 	}
-	return data.Users, nil
+	return users, nil
 }
 
 func (c *Client) User(ctx context.Context, name string) (User, error) {
@@ -145,7 +159,7 @@ func (c *Client) User(ctx context.Context, name string) (User, error) {
 	}
 	for _, u := range users {
 		if u.Name == name {
-			groups, err := c.UserGroups(ctx, name)
+			groups, err := c.UserGroups(ctx, name, u.UID)
 			if err != nil {
 				return User{}, err
 			}
@@ -154,17 +168,6 @@ func (c *Client) User(ctx context.Context, name string) (User, error) {
 		}
 	}
 	return User{}, ErrNotFound
-}
-
-func (c *Client) WriteUser(ctx context.Context, method string, u User, password string) error {
-	if method != "create" && method != "set" {
-		return errors.New("unsupported user mutation")
-	}
-	args := url.Values{"name": {u.Name}, "description": {u.Description}, "email": {u.Email}, "expired": {u.Expired}}
-	if password != "" {
-		args.Set("password", password)
-	}
-	return c.Mutate(ctx, "SYNO.Core.User", 1, method, args)
 }
 
 func (c *Client) Groups(ctx context.Context) ([]Group, error) {
@@ -176,7 +179,7 @@ func (c *Client) Groups(ctx context.Context) ([]Group, error) {
 	if err != nil {
 		return nil, err
 	}
-	if data.Groups == nil || (data.Total != nil && *data.Total != len(data.Groups)) {
+	if data.Groups == nil || data.Total == nil || *data.Total != len(data.Groups) {
 		return nil, errors.New("DSM group listing is incomplete")
 	}
 	for _, g := range data.Groups {
@@ -195,22 +198,33 @@ func (c *Client) Group(ctx context.Context, name string) (Group, error) {
 	for _, g := range groups {
 		if g.Name == name {
 			var result struct {
-				Groups []Group           `json:"groups"`
+				Groups []json.RawMessage `json:"groups"`
 				Errors []json.RawMessage `json:"errors"`
 			}
 			if err := c.Call(ctx, "SYNO.Core.Group", 1, "get", url.Values{"name": {JSON([]string{name})}}, &result); err != nil {
 				return Group{}, err
 			}
-			if len(result.Errors) != 0 || len(result.Groups) != 1 || result.Groups[0].Name != name || result.Groups[0].GID <= 0 {
+			if len(result.Errors) != 0 || len(result.Groups) != 1 {
 				return Group{}, errors.New("DSM group lookup returned an incomplete or ambiguous identity")
 			}
-			return result.Groups[0], nil
+			var actual Group
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(result.Groups[0], &actual) != nil || json.Unmarshal(result.Groups[0], &fields) != nil {
+				return Group{}, errors.New("DSM returned a malformed group")
+			}
+			if err := requireStrings(fields, "name", "description"); err != nil {
+				return Group{}, err
+			}
+			if actual.Name != name || actual.GID <= 0 {
+				return Group{}, errors.New("DSM group lookup returned an invalid identity")
+			}
+			return actual, nil
 		}
 	}
 	return Group{}, ErrNotFound
 }
 
-func (c *Client) UserGroups(ctx context.Context, name string) ([]string, error) {
+func (c *Client) UserGroups(ctx context.Context, name string, uid int64) ([]string, error) {
 	groups, err := c.Groups(ctx)
 	if err != nil {
 		return nil, err
@@ -220,13 +234,14 @@ func (c *Client) UserGroups(ctx context.Context, name string) ([]string, error) 
 		var data struct {
 			Users []struct {
 				Name string `json:"name"`
+				UID  int64  `json:"uid"`
 			} `json:"users"`
 			Total *int `json:"total"`
 		}
 		if err := c.Call(ctx, "SYNO.Core.Group.Member", 1, "list", url.Values{"group": {g.Name}, "ingroup": {"true"}, "offset": {"0"}, "limit": {"-1"}}, &data); err != nil {
 			return nil, err
 		}
-		if data.Users == nil || (data.Total != nil && *data.Total != len(data.Users)) {
+		if data.Users == nil || data.Total == nil || *data.Total != len(data.Users) {
 			return nil, errors.New("DSM group membership listing is incomplete")
 		}
 		for _, u := range data.Users {
@@ -234,6 +249,9 @@ func (c *Client) UserGroups(ctx context.Context, name string) ([]string, error) 
 				return nil, errors.New("DSM group member has no account name")
 			}
 			if u.Name == name {
+				if u.UID != uid {
+					return nil, errors.New("account identity changed while reading membership")
+				}
 				membership = append(membership, g.Name)
 			}
 		}
@@ -245,7 +263,21 @@ func (c *Client) UserGroups(ctx context.Context, name string) ([]string, error) 
 func (c *Client) SetUserGroups(ctx context.Context, name string, desired []string) error {
 	c.mutation.Lock()
 	defer c.mutation.Unlock()
-	current, err := c.UserGroups(ctx, name)
+	users, err := c.Users(ctx)
+	if err != nil {
+		return err
+	}
+	uid := int64(0)
+	for _, u := range users {
+		if u.Name == name {
+			uid = u.UID
+			break
+		}
+	}
+	if uid <= 0 {
+		return ErrNotFound
+	}
+	current, err := c.UserGroups(ctx, name, uid)
 	if err != nil {
 		return err
 	}
@@ -300,6 +332,16 @@ func (c *Client) SetUserGroups(ctx context.Context, name string, desired []strin
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func requireStrings(fields map[string]json.RawMessage, names ...string) error {
+	for _, name := range names {
+		var value string
+		if bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) || json.Unmarshal(fields[name], &value) != nil {
+			return errors.New("DSM metadata is missing a managed string value")
+		}
+	}
+	return nil
 }
 
 func (c *Client) WriteGroup(ctx context.Context, method string, g Group) error {
