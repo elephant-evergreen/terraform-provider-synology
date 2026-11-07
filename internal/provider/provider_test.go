@@ -31,8 +31,8 @@ func TestProviderSchema(t *testing.T) {
 			t.Fatalf("schema: %s: %s", diag.Summary, diag.Detail)
 		}
 	}
-	if len(result.ResourceSchemas) != 10 {
-		t.Fatalf("expected ten typed resources, got %d", len(result.ResourceSchemas))
+	if len(result.ResourceSchemas) != 14 {
+		t.Fatalf("expected fourteen typed resources, got %d", len(result.ResourceSchemas))
 	}
 }
 
@@ -81,7 +81,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			name := r.Form.Get("name")
 			switch api {
 			case "SYNO.Core.Share":
-				f.shares[name] = map[string]any{"name": name, "uuid": "foreign-folder", "vol_path": "/volume1", "desc": "foreign", "hidden": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}
+				f.shares[name] = map[string]any{"name": name, "uuid": "foreign-folder", "vol_path": "/volume1", "desc": "foreign", "hidden": false, "hide_unreadable": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}
 			case "SYNO.Core.Group":
 				f.groups[name] = map[string]any{"name": name, "gid": 9001, "description": "foreign"}
 			case "SYNO.Core.User":
@@ -137,6 +137,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			name := r.Form.Get("name")
 			if method == "create" {
 				s["uuid"] = "fixture-uuid-" + name
+				if _, ok := s["hide_unreadable"]; !ok {
+					s["hide_unreadable"] = false
+				}
 				f.shares[name] = s
 			} else {
 				for k, v := range s {
@@ -388,6 +391,7 @@ resource "synology_shared_folder" "test" {
   name = "fixture"
   volume = "/volume1"
   description = %q
+  hide_unauthorized_files = true
   deletion_protection = %t
 }
 `, server.URL, ca, desc, protect)
@@ -414,7 +418,12 @@ resource "synology_shared_folder" "test" {
 				return nil
 			}},
 			{Config: config("updated", true), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
-			{Config: config("updated", true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() { f.mu.Lock(); f.shares["fixture"]["desc"] = "external change"; f.mu.Unlock() }},
+			{Config: config("updated", true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() {
+				f.mu.Lock()
+				f.shares["fixture"]["desc"] = "external change"
+				f.shares["fixture"]["hide_unreadable"] = false
+				f.mu.Unlock()
+			}},
 			{Config: config("updated", false), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
 		},
 	})
@@ -460,5 +469,50 @@ resource "synology_user" "test" {
 			f.mu.Unlock()
 		}, Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("synology_user.test", "description", "updated"), resource.TestCheckResourceAttr("synology_user.test", "groups.#", "2"))},
 		{Config: config("updated"), PlanOnly: true},
+	}})
+}
+
+func TestAccSharedFolderOmittedVisibilityIsPreserved(t *testing.T) {
+	f := &fixture{shares: map[string]map[string]any{}}
+	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
+	defer server.Close()
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := func(description string, protect bool) string {
+		return fmt.Sprintf(`
+provider "synology" {
+ endpoint = %q
+ ca_file = %q
+ username = "fixture-user"
+ password = "fixture-password"
+}
+resource "synology_shared_folder" "test" {
+ name = "fixture"
+ volume = "/volume1"
+ description = %q
+ deletion_protection = %t
+}
+`, server.URL, ca, description, protect)
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"synology": providerserver.NewProtocol6WithError(New("test")())}, Steps: []resource.TestStep{
+		{Config: config("initial", true), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "hide_unauthorized_files", "false")},
+		{Config: config("updated", true), PreConfig: func() { f.mu.Lock(); f.shares["fixture"]["hide_unreadable"] = true; f.mu.Unlock() }, Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "hide_unauthorized_files", "true")},
+		{Config: config("updated", false), Check: func(_ *terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.writes != 2 {
+				return fmt.Errorf("omitted visibility or local protection caused an extra remote write: %d", f.writes)
+			}
+			return nil
+		}},
+	}, CheckDestroy: func(_ *terraform.State) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.shares) != 0 {
+			return fmt.Errorf("fixture shared folder still exists")
+		}
+		return nil
 	}})
 }

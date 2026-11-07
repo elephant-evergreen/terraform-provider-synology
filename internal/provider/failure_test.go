@@ -71,9 +71,10 @@ func TestCreationFailuresPreserveOwnershipBoundary(t *testing.T) {
 				switch kind {
 				case "shared_folder":
 					r = NewSharedFolderResource()
-					m := shareModel{Name: types.StringValue("fixture"), Volume: types.StringValue("/volume1"), Description: types.StringValue("initial"), UUID: types.StringUnknown(), Hidden: types.BoolValue(false), RecycleBin: types.BoolValue(true), RecycleBinAdminOnly: types.BoolValue(true), DeletionProtection: types.BoolValue(true)}
+					m := shareModel{Name: types.StringValue("fixture"), Volume: types.StringValue("/volume1"), Description: types.StringValue("initial"), UUID: types.StringUnknown(), Hidden: types.BoolValue(false), HideUnauthorizedFiles: types.BoolUnknown(), RecycleBin: types.BoolValue(true), RecycleBinAdminOnly: types.BoolValue(true), DeletionProtection: types.BoolValue(true)}
 					plan = m
 					m.UUID = types.StringNull()
+					m.HideUnauthorizedFiles = types.BoolNull()
 					config = m
 				case "group":
 					r = NewGroupResource()
@@ -120,6 +121,15 @@ func TestCreationFailuresPreserveOwnershipBoundary(t *testing.T) {
 				}
 				if state.IsNull() {
 					t.Fatal("unconfirmed or acknowledged partial creation lost its provisional identity")
+				}
+				if kind == "shared_folder" {
+					var retained shareModel
+					if d := (&tfsdk.State{Schema: rs.Schema, Raw: state}).Get(ctx, &retained); d.HasError() {
+						t.Fatal(d)
+					}
+					if retained.HideUnauthorizedFiles.IsUnknown() {
+						t.Fatal("partial creation retained an unknown visibility value")
+					}
 				}
 				if mode == "read_failure" {
 					f.mu.Lock()
@@ -189,7 +199,7 @@ func TestReplacementIdentityRefusesSavedPlanMutation(t *testing.T) {
 		for _, operation := range []string{"update", "delete"} {
 			t.Run(kind+"/"+operation, func(t *testing.T) {
 				ctx := context.Background()
-				f := &fixture{shares: map[string]map[string]any{"fixture": {"name": "fixture", "uuid": "replacement", "vol_path": "/volume1", "desc": "initial", "hidden": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}}, users: map[string]map[string]any{"fixture": {"name": "fixture", "uid": 9001, "description": "initial", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "fixture": {"name": "fixture", "gid": 9001, "description": "initial"}}, permissions: map[string]map[string]any{}}
+				f := &fixture{shares: map[string]map[string]any{"fixture": {"name": "fixture", "uuid": "replacement", "vol_path": "/volume1", "desc": "initial", "hidden": false, "hide_unreadable": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}}, users: map[string]map[string]any{"fixture": {"name": "fixture", "uid": 9001, "description": "initial", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "fixture": {"name": "fixture", "gid": 9001, "description": "initial"}}, permissions: map[string]map[string]any{}}
 				server := configuredFixtureProtocol(t, f)
 				var r resource.Resource
 				var prior, planned any
@@ -263,7 +273,7 @@ func TestPermissionValidationDefersUnknownElements(t *testing.T) {
 
 func TestPermissionPreflightRejectsMissingGroupBeforeAnyWrite(t *testing.T) {
 	ctx := context.Background()
-	f := &fixture{shares: map[string]map[string]any{"fixture": {"name": "fixture", "uuid": "folder", "vol_path": "/volume1", "desc": "", "hidden": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}}, users: map[string]map[string]any{"reader": {"name": "reader", "uid": 1027, "description": "", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "administrators": {"name": "administrators", "gid": 101, "description": "System default admin group"}}, permissions: map[string]map[string]any{"fixture:local_user:reader": {"name": "reader", "is_readonly": false, "is_writable": true, "is_deny": false}}}
+	f := &fixture{shares: map[string]map[string]any{"fixture": {"name": "fixture", "uuid": "folder", "vol_path": "/volume1", "desc": "", "hidden": false, "hide_unreadable": false, "enable_recycle_bin": true, "recycle_bin_admin_only": true}}, users: map[string]map[string]any{"reader": {"name": "reader", "uid": 1027, "description": "", "email": "", "expired": "normal", "groups": []string{"users"}}}, groups: map[string]map[string]any{"users": {"name": "users", "gid": 100, "description": "System default group"}, "administrators": {"name": "administrators", "gid": 101, "description": "System default admin group"}}, permissions: map[string]map[string]any{"fixture:local_user:reader": {"name": "reader", "is_readonly": false, "is_writable": true, "is_deny": false}}}
 	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	defer server.Close()
 	ca := filepath.Join(t.TempDir(), "ca.pem")

@@ -186,6 +186,16 @@ func (c *Client) Mutate(ctx context.Context, api string, version int, method str
 	return c.Call(ctx, api, version, method, args, nil)
 }
 
+func (c *Client) MutateAfterRead(ctx context.Context, api string, version int, method string, prepare func() (url.Values, error)) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	args, err := prepare()
+	if err != nil || args == nil {
+		return err
+	}
+	return c.Call(ctx, api, version, method, args, nil)
+}
+
 func JSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
