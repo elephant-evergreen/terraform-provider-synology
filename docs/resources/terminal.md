@@ -3,12 +3,12 @@
 page_title: "synology_terminal Resource - synology"
 subcategory: ""
 description: |-
-  SSH and Telnet terminal-access policy. This resource does not change listening ports or SSH cryptographic algorithms. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.
+  SSH and Telnet terminal-access policy. Manage its listening port, console access and selected SSH cryptographic algorithms here. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.
 ---
 
 # synology_terminal (Resource)
 
-SSH and Telnet terminal-access policy. This resource does not change listening ports or SSH cryptographic algorithms. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.
+SSH and Telnet terminal-access policy. Manage its listening port, console access and selected SSH cryptographic algorithms here. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.
 
 ## Example Usage
 
@@ -24,7 +24,12 @@ resource "synology_terminal" "main" {
 
 ### Optional
 
+- `console_forbidden` (Boolean) Disallow console access.
+- `ssh_ciphers` (Set of String) Selected SSH cipher names. Omission retains DSM selections.
 - `ssh_enabled` (Boolean) Allow SSH terminal connections. SFTP has a separate service policy.
+- `ssh_key_exchanges` (Set of String) Selected SSH key-exchange algorithm names.
+- `ssh_macs` (Set of String) Selected SSH message-authentication algorithm names.
+- `ssh_port` (Number) SSH listening port, from 1 to 65535. Changes can interrupt management access.
 - `telnet_enabled` (Boolean) Allow unencrypted Telnet terminal connections.
 
 ### Read-Only

@@ -3,12 +3,12 @@
 page_title: "synology_rsync Resource - synology"
 subcategory: ""
 description: |-
-  Rsync network-backup service policy. Account credentials, custom configuration and SSH port settings remain outside this resource. Destroy leaves DSM settings unchanged.
+  Rsync network-backup service policy. Account credentials and custom configuration remain outside this resource. Destroy leaves DSM settings unchanged.
 ---
 
 # synology_rsync (Resource)
 
-Rsync network-backup service policy. Account credentials, custom configuration and SSH port settings remain outside this resource. Destroy leaves DSM settings unchanged.
+Rsync network-backup service policy. Account credentials and custom configuration remain outside this resource. Destroy leaves DSM settings unchanged.
 
 ## Example Usage
 
@@ -25,7 +25,9 @@ resource "synology_rsync" "main" {
 ### Optional
 
 - `accounts_enabled` (Boolean) Enable rsync-specific accounts. This does not create or rotate account credentials.
+- `custom_configuration_enabled` (Boolean) Enable the existing custom rsync configuration. This resource does not edit its text.
 - `enabled` (Boolean) Enable the rsync network-backup service.
+- `ssh_port` (Number) Rsync SSH port, from 1 to 65535.
 
 ### Read-Only
 

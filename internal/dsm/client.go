@@ -162,6 +162,7 @@ func (c *Client) request(ctx context.Context, path, api string, version int, met
 	var envelope struct {
 		Success *bool           `json:"success"`
 		Data    json.RawMessage `json:"data"`
+		Finish  json.RawMessage `json:"finish"`
 		Error   struct {
 			Code int `json:"code"`
 		} `json:"error"`
@@ -172,6 +173,14 @@ func (c *Client) request(ctx context.Context, path, api string, version int, met
 	if !*envelope.Success {
 		return &APIError{API: api, Method: method, Code: envelope.Error.Code}
 	}
+	if reader, ok := result.(interface {
+		decodeEnvelope(json.RawMessage, json.RawMessage) error
+	}); ok {
+		if err := reader.decodeEnvelope(envelope.Data, envelope.Finish); err != nil {
+			return fmt.Errorf("DSM %s.%s returned malformed task data", api, method)
+		}
+		return nil
+	}
 	if result != nil {
 		if len(envelope.Data) == 0 || string(envelope.Data) == "null" || json.Unmarshal(envelope.Data, result) != nil {
 			return fmt.Errorf("DSM %s.%s returned malformed data", api, method)
@@ -181,22 +190,52 @@ func (c *Client) request(ctx context.Context, path, api string, version int, met
 }
 
 func (c *Client) Mutate(ctx context.Context, api string, version int, method string, args url.Values) error {
-	c.mutation.Lock()
-	defer c.mutation.Unlock()
-	return c.Call(ctx, api, version, method, args, nil)
+	return c.MutateAfterRead(ctx, api, version, method, func() (url.Values, error) { return args, nil })
 }
 
 func (c *Client) MutateAfterRead(ctx context.Context, api string, version int, method string, prepare func() (url.Values, error)) error {
-	c.mutation.Lock()
-	defer c.mutation.Unlock()
-	args, err := prepare()
-	if err != nil || args == nil {
+	var reply MutationReply
+	if err := c.MutateAfterReadResult(ctx, api, version, method, prepare, &reply); err != nil {
 		return err
 	}
-	return c.Call(ctx, api, version, method, args, nil)
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return fmt.Errorf("DSM %s.%s did not acknowledge a successful synchronous mutation; inspect and reconcile before retrying", api, method)
+	}
+	return nil
+}
+
+func (c *Client) MutateAfterReadResult(ctx context.Context, api string, version int, method string, prepare func() (url.Values, error), result any) error {
+	return c.WithMutation(func() error {
+		args, err := prepare()
+		if err != nil || args == nil {
+			return err
+		}
+		return c.Call(ctx, api, version, method, args, result)
+	})
 }
 
 func JSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func (c *Client) WithMutation(operation func() error) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	return operation()
+}
+
+func (c *Client) UsesHTTPSPort(port int) bool {
+	endpoint, err := url.Parse(c.endpoint)
+	if err != nil {
+		return false
+	}
+	actual := 443
+	if endpoint.Port() != "" {
+		actual, err = strconv.Atoi(endpoint.Port())
+		if err != nil {
+			return false
+		}
+	}
+	return actual == port
 }
