@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,9 +22,13 @@ import (
 )
 
 func TestAccAdditionalServiceLifecycles(t *testing.T) {
-	selected := map[string]string{"terminal": "ssh_enabled", "rsync": "enabled", "windows_discovery": "enabled", "file_transfer_logging": "smb_enabled"}
+	selected := map[string]string{"terminal": "ssh_enabled", "rsync": "enabled", "windows_discovery": "enabled", "file_transfer_logging": "smb_enabled", "network": "manual_dns", "time_machine": "smb_enabled", "quickconnect_upnp": "enabled"}
 	for _, constructor := range serviceResources() {
-		definition := constructor().(*serviceResource).definition
+		r, ok := constructor().(*serviceResource)
+		if !ok {
+			continue
+		}
+		definition := r.definition
 		changed, ok := selected[definition.name]
 		if !ok {
 			continue
@@ -34,24 +38,31 @@ func TestAccAdditionalServiceLifecycles(t *testing.T) {
 			settings := map[string]any{"unmanaged_future_setting": "preserved"}
 			fields := make([]string, 0, len(definition.fields))
 			for name, field := range definition.fields {
-				if field.kind != types.BoolType {
-					t.Fatal("fixture expects boolean fields")
+				switch field.kind {
+				case types.BoolType:
+					settings[field.wire] = false
+				case types.StringType:
+					settings[field.wire] = "fixture"
+				case types.Int64Type:
+					settings[field.wire] = int64(2022)
+				default:
+					settings[field.wire] = []string{}
 				}
-				settings[field.wire] = false
+				if name == "primary_dns" {
+					settings[field.wire] = "192.0.2.53"
+				}
+				if name == "secondary_dns" {
+					settings[field.wire] = ""
+				}
+				if definition.name == "terminal" && field.kind.Equal(types.SetType{ElemType: types.StringType}) {
+					settings[field.wire] = []map[string]any{{"name": "fixture-old", "in_use": true}, {"name": "fixture-new", "in_use": false}}
+				}
 				fields = append(fields, name)
 			}
-			for wire, kind := range definition.retainedFields {
-				if kind == types.Int64Type {
-					if definition.name == "rsync" {
-						settings[wire] = "2022"
-					} else {
-						settings[wire] = 2022
-					}
-				} else {
-					settings[wire] = true
-				}
+			original := map[string]any{}
+			for key, value := range settings {
+				original[key] = value
 			}
-			sort.Strings(fields)
 			writes, beforeImport := 0, 0
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
@@ -71,22 +82,58 @@ func TestAccAdditionalServiceLifecycles(t *testing.T) {
 					case "get":
 						data = settings
 					case "set":
-						for wire := range definition.retainedFields {
-							if r.Form.Get(wire) != fmt.Sprint(settings[wire]) {
-								t.Error("a nondefault retained setting was not preserved")
+						coupled := []string{}
+						if definition.name == "terminal" {
+							coupled = []string{"ssh_port", "forbid_console"}
+						}
+						if definition.name == "rsync" {
+							coupled = []string{"rsync_sshd_port", "enable_custom_config"}
+						}
+						for _, wire := range coupled {
+							if !r.Form.Has(wire) || r.Form.Get(wire) != fmt.Sprint(settings[wire]) {
+								t.Error("coupled nondefault setting was not retained")
 								w.WriteHeader(400)
 								return
 							}
 						}
 						writes++
 						for _, field := range definition.fields {
-							if r.Form.Has(field.wire) {
-								v, err := strconv.ParseBool(r.Form.Get(field.wire))
+							if !r.Form.Has(field.wire) {
+								continue
+							}
+							text := r.Form.Get(field.wire)
+							switch field.kind {
+							case types.BoolType:
+								v, err := strconv.ParseBool(text)
 								if err != nil {
 									w.WriteHeader(400)
 									return
 								}
 								settings[field.wire] = v
+							case types.Int64Type:
+								v, err := strconv.ParseInt(text, 10, 64)
+								if err != nil {
+									w.WriteHeader(400)
+									return
+								}
+								settings[field.wire] = v
+							case types.StringType:
+								settings[field.wire] = text
+							default:
+								var names []string
+								if json.Unmarshal([]byte(text), &names) != nil {
+									w.WriteHeader(400)
+									return
+								}
+								if definition.name == "terminal" {
+									entries := []map[string]any{}
+									for _, name := range names {
+										entries = append(entries, map[string]any{"name": name, "in_use": true})
+									}
+									settings[field.wire] = entries
+								} else {
+									settings[field.wire] = names
+								}
 							}
 						}
 					default:
@@ -148,7 +195,7 @@ resource "synology_%s" "test" {
 					mu.Lock()
 					defer mu.Unlock()
 					for _, name := range fields {
-						if name != changed && settings[definition.fields[name].wire] != false {
+						if name != changed && !reflect.DeepEqual(settings[definition.fields[name].wire], original[definition.fields[name].wire]) {
 							return fmt.Errorf("unconfigured setting changed")
 						}
 					}

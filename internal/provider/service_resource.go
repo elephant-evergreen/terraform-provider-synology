@@ -25,12 +25,13 @@ type serviceField struct {
 	description string
 }
 type serviceDefinition struct {
-	name           string
-	api            string
-	version        int
-	description    string
-	fields         map[string]serviceField
-	retainedFields map[string]attr.Type
+	name          string
+	api           string
+	version       int
+	description   string
+	fields        map[string]serviceField
+	prepareWrite  func(types.Object, url.Values) error
+	normalizeRead func(map[string]json.RawMessage) error
 }
 type serviceResource struct {
 	definition serviceDefinition
@@ -41,7 +42,7 @@ func service(def serviceDefinition) func() resource.Resource {
 	return func() resource.Resource { return &serviceResource{definition: def} }
 }
 func serviceResources() []func() resource.Resource {
-	return []func() resource.Resource{
+	return append([]func() resource.Resource{
 		service(serviceDefinition{name: "smb", api: "SYNO.Core.FileServ.SMB", version: 3, description: "SMB file-sharing configuration. Settings omitted from configuration retain their current DSM values. Changing a service may interrupt existing connections; import existing settings first.", fields: map[string]serviceField{
 			"enabled":                        {"enable_samba", types.BoolType, "Enable SMB file sharing."},
 			"workgroup":                      {"workgroup", types.StringType, "SMB workgroup name."},
@@ -68,13 +69,20 @@ func serviceResources() []func() resource.Resource {
 		service(serviceDefinition{name: "sftp", api: "SYNO.Core.FileServ.FTP.SFTP", version: 1, description: "SFTP file-sharing configuration. SSH terminal access remains a separate setting.", fields: map[string]serviceField{
 			"enabled": {"enable", types.BoolType, "Enable SFTP."}, "port": {"portnum", types.Int64Type, "SFTP listening port."},
 		}}),
-		service(serviceDefinition{name: "terminal", api: "SYNO.Core.Terminal", version: 3, retainedFields: map[string]attr.Type{"ssh_port": types.Int64Type, "forbid_console": types.BoolType}, description: "SSH and Telnet terminal-access policy. This resource does not change listening ports or SSH cryptographic algorithms. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
-			"ssh_enabled":    {"enable_ssh", types.BoolType, "Allow SSH terminal connections. SFTP has a separate service policy."},
-			"telnet_enabled": {"enable_telnet", types.BoolType, "Allow unencrypted Telnet terminal connections."},
+		service(serviceDefinition{name: "terminal", api: "SYNO.Core.Terminal", version: 3, normalizeRead: normalizeTerminal, prepareWrite: prepareTerminalWrite, description: "SSH and Telnet terminal-access policy. Manage its listening port, console access and selected SSH cryptographic algorithms here. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
+			"ssh_enabled":       {"enable_ssh", types.BoolType, "Allow SSH terminal connections. SFTP has a separate service policy."},
+			"telnet_enabled":    {"enable_telnet", types.BoolType, "Allow unencrypted Telnet terminal connections."},
+			"ssh_port":          {"ssh_port", types.Int64Type, "SSH listening port, from 1 to 65535. Changes can interrupt management access."},
+			"console_forbidden": {"forbid_console", types.BoolType, "Disallow console access."},
+			"ssh_ciphers":       {"ssh_cipher", types.SetType{ElemType: types.StringType}, "Selected SSH cipher names. Omission retains DSM selections."},
+			"ssh_key_exchanges": {"ssh_kex", types.SetType{ElemType: types.StringType}, "Selected SSH key-exchange algorithm names."},
+			"ssh_macs":          {"ssh_mac", types.SetType{ElemType: types.StringType}, "Selected SSH message-authentication algorithm names."},
 		}}),
-		service(serviceDefinition{name: "rsync", api: "SYNO.Backup.Service.NetworkBackup", version: 1, retainedFields: map[string]attr.Type{"rsync_sshd_port": types.Int64Type}, description: "Rsync network-backup service policy. Account credentials, custom configuration and SSH port settings remain outside this resource. Destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
-			"enabled":          {"enable", types.BoolType, "Enable the rsync network-backup service."},
-			"accounts_enabled": {"enable_rsync_account", types.BoolType, "Enable rsync-specific accounts. This does not create or rotate account credentials."},
+		service(serviceDefinition{name: "rsync", api: "SYNO.Backup.Service.NetworkBackup", version: 1, prepareWrite: prepareRsyncWrite, description: "Rsync network-backup service policy. Account credentials and custom configuration remain outside this resource. Destroy leaves DSM settings unchanged.", fields: map[string]serviceField{
+			"enabled":                      {"enable", types.BoolType, "Enable the rsync network-backup service."},
+			"custom_configuration_enabled": {"enable_custom_config", types.BoolType, "Enable the existing custom rsync configuration. This resource does not edit its text."},
+			"accounts_enabled":             {"enable_rsync_account", types.BoolType, "Enable rsync-specific accounts. This does not create or rotate account credentials."},
+			"ssh_port":                     {"rsync_sshd_port", types.Int64Type, "Rsync SSH port, from 1 to 65535."},
 		}}),
 		service(serviceDefinition{name: "windows_discovery", api: "SYNO.Core.FileServ.ServiceDiscovery.WSTransfer", version: 1, description: "Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it; reference synology_smb.enabled to establish matching policy and ordering. Destroy leaves discovery unchanged.", fields: map[string]serviceField{
 			"enabled": {"enable_wstransfer", types.BoolType, "Advertise the NAS through Windows WS-Discovery."},
@@ -91,7 +99,7 @@ func serviceResources() []func() resource.Resource {
 		service(serviceDefinition{name: "time", api: "SYNO.Core.Region.NTP", version: 2, description: "DSM NTP and time-zone configuration. This resource never sets the wall clock directly. Synchronization success depends on the NAS network policy.", fields: map[string]serviceField{
 			"synchronization": {"enable_ntp", types.StringType, "DSM synchronization mode; ntp enables NTP."}, "ntp_server": {"server", types.StringType, "NTP server name."}, "timezone": {"timezone", types.StringType, "DSM time-zone identifier, such as Seoul."}, "date_format": {"date_format", types.StringType, "DSM date display format."}, "time_format": {"time_format", types.StringType, "DSM time display format."},
 		}}),
-	}
+	}, extendedServices()...)
 }
 
 func (r *serviceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -107,6 +115,10 @@ func (r *serviceResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			attributes[name] = schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: field.description}
 		case types.StringType:
 			attributes[name] = schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: field.description}
+		default:
+			if field.kind.Equal(types.SetType{ElemType: types.StringType}) {
+				attributes[name] = schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, MarkdownDescription: field.description}
+			}
 		}
 	}
 	resp.Schema = schema.Schema{MarkdownDescription: r.definition.description, Attributes: attributes}
@@ -122,77 +134,69 @@ func (r *serviceResource) Configure(_ context.Context, req resource.ConfigureReq
 	}
 	r.client = c
 }
-func (r *serviceResource) readSettings(ctx context.Context) (types.Object, url.Values, error) {
+func (r *serviceResource) read(ctx context.Context) (types.Object, error) {
 	var raw map[string]json.RawMessage
 	if err := r.client.Call(ctx, r.definition.api, r.definition.version, "get", nil, &raw); err != nil {
-		return types.Object{}, nil, err
+		return types.Object{}, err
+	}
+	return r.decodeSettings(ctx, raw)
+}
+func (r *serviceResource) decodeSettings(ctx context.Context, raw map[string]json.RawMessage) (types.Object, error) {
+	if r.definition.normalizeRead != nil {
+		if err := r.definition.normalizeRead(raw); err != nil {
+			return types.Object{}, err
+		}
 	}
 	values := map[string]attr.Value{"id": types.StringValue(r.definition.name)}
 	kinds := map[string]attr.Type{"id": types.StringType}
 	for name, field := range r.definition.fields {
 		value, ok := raw[field.wire]
 		if !ok || string(value) == "null" {
-			return types.Object{}, nil, fmt.Errorf("DSM %s response is missing the managed %s setting", r.definition.name, name)
+			return types.Object{}, fmt.Errorf("DSM %s response is missing the managed %s setting", r.definition.name, name)
 		}
 		kinds[name] = field.kind
 		switch field.kind {
 		case types.BoolType:
 			var v bool
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
+				return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
 			}
 			values[name] = types.BoolValue(v)
 		case types.Int64Type:
 			var v int64
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
+				var text string
+				if json.Unmarshal(value, &text) != nil {
+					return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
+				}
+				var err error
+				v, err = strconv.ParseInt(text, 10, 64)
+				if err != nil {
+					return types.Object{}, fmt.Errorf("DSM %s setting is not an integer", name)
+				}
 			}
 			values[name] = types.Int64Value(v)
 		case types.StringType:
 			var v string
 			if json.Unmarshal(value, &v) != nil {
-				return types.Object{}, nil, fmt.Errorf("DSM %s setting has the wrong type", name)
+				return types.Object{}, fmt.Errorf("DSM %s setting has the wrong type", name)
 			}
 			values[name] = types.StringValue(v)
-		}
-	}
-	retained := url.Values{}
-	for wire, kind := range r.definition.retainedFields {
-		value := raw[wire]
-		if len(value) == 0 || string(value) == "null" {
-			return types.Object{}, nil, fmt.Errorf("DSM %s response is missing a setting required to preserve configuration", r.definition.name)
-		}
-		switch kind {
-		case types.BoolType:
-			var v bool
-			if err := json.Unmarshal(value, &v); err != nil {
-				return types.Object{}, nil, fmt.Errorf("DSM %s retained flag has the wrong type", r.definition.name)
-			}
-			retained.Set(wire, strconv.FormatBool(v))
-		case types.Int64Type:
-			var text string
-			if err := json.Unmarshal(value, &text); err != nil {
-				var v int64
-				if err := json.Unmarshal(value, &v); err != nil {
-					return types.Object{}, nil, fmt.Errorf("DSM %s retained port is malformed", r.definition.name)
-				}
-				text = strconv.FormatInt(v, 10)
-			}
-			port, err := strconv.ParseInt(text, 10, 64)
-			if err != nil || port < 1 || port > 65535 {
-				return types.Object{}, nil, fmt.Errorf("DSM %s retained port is invalid", r.definition.name)
-			}
-			retained.Set(wire, strconv.FormatInt(port, 10))
 		default:
-			return types.Object{}, nil, fmt.Errorf("unsupported retained setting type")
+			var entries []string
+			if !field.kind.Equal(types.SetType{ElemType: types.StringType}) || json.Unmarshal(value, &entries) != nil {
+				return types.Object{}, fmt.Errorf("DSM %s setting is not a string set", name)
+			}
+			set, diags := types.SetValueFrom(ctx, types.StringType, entries)
+			if diags.HasError() {
+				return types.Object{}, fmt.Errorf("cannot decode DSM %s set", name)
+			}
+			values[name] = set
 		}
 	}
-	return types.ObjectValueMust(kinds, values), retained, nil
+	return types.ObjectValueMust(kinds, values), nil
 }
-func (r *serviceResource) read(ctx context.Context) (types.Object, error) {
-	actual, _, err := r.readSettings(ctx)
-	return actual, err
-}
+
 func (r *serviceResource) desired(ctx context.Context, config tfsdk.Config) (map[string]attr.Value, url.Values, error) {
 	values := map[string]attr.Value{}
 	args := url.Values{}
@@ -234,6 +238,22 @@ func (r *serviceResource) desired(ctx context.Context, config tfsdk.Config) (map
 				values[name] = v
 				args.Set(field.wire, v.ValueString())
 			}
+		default:
+			var v types.Set
+			if d := config.GetAttribute(ctx, path.Root(name), &v); d.HasError() {
+				return nil, nil, fmt.Errorf("cannot decode %s", name)
+			}
+			if v.IsUnknown() {
+				return nil, nil, fmt.Errorf("%s must be known before applying", name)
+			}
+			if !v.IsNull() {
+				var entries []string
+				if d := v.ElementsAs(ctx, &entries, false); d.HasError() {
+					return nil, nil, fmt.Errorf("%s entries must be known strings", name)
+				}
+				values[name] = v
+				args.Set(field.wire, dsm.JSON(entries))
+			}
 		}
 	}
 	return values, args, nil
@@ -254,17 +274,16 @@ func (r *serviceResource) apply(ctx context.Context, config tfsdk.Config) (types
 	var actual types.Object
 	changed := false
 	err = r.client.MutateAfterRead(ctx, r.definition.api, r.definition.version, "set", func() (url.Values, error) {
-		var retained url.Values
-		actual, retained, err = r.readSettings(ctx)
+		actual, err = r.read(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if serviceMatches(actual, desired) {
 			return nil, nil
 		}
-		for key, values := range retained {
-			if !args.Has(key) {
-				args[key] = values
+		if r.definition.prepareWrite != nil {
+			if err := r.definition.prepareWrite(actual, args); err != nil {
+				return nil, err
 			}
 		}
 		changed = true
