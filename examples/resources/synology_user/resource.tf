@@ -1,6 +1,6 @@
 resource "synology_user" "reader" {
   name                = "reader"
   description         = "Archive reader"
-  groups              = ["users", synology_group.team.name]
+  groups              = ["users", "team"]
   deletion_protection = true
 }

@@ -1,8 +1,8 @@
 resource "synology_share_permissions" "archive" {
-  share = synology_shared_folder.archive.name
+  share = "archive"
   users = {}
   groups = {
-    administrators             = "read_write"
-    (synology_group.team.name) = "read_only"
+    administrators = "read_write"
+    team           = "read_only"
   }
 }

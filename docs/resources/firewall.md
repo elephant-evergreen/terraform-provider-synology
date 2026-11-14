@@ -3,14 +3,27 @@
 page_title: "synology_firewall Resource - synology"
 subcategory: ""
 description: |-
-  Selected DSM firewall profile, enabled policy and provider-initiated activation, with ordered per-interface rules. Stored profile drift is readable; kernel rules and out-of-band unapplied edits cannot be compared through this API. Import is mandatory. Existing profiles can be selected; profile creation, rename and deletion are outside this singleton. One resource owns its complete selected profile. Active policy changes require declared management source networks, an explicit global allow for the DSM HTTPS port and DSM port checking. These admission checks do not prove the declared sources match the real path or provide atomic rollback. Keep an independent management path. Destroy never disables the firewall or deletes profiles.
+  Manage the selected DSM firewall profile and its ordered rules. For an import-only plan, use an empty resource block (for example, resource "synology_firewall" "nas" {}). You can then use the observed profile, port-check setting and adapter policy from DSM when planning an intentional change. Before changing rules, secure an independent management path and follow the firewall change and recovery guide https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs/guides/firewall. Destroy releases Terraform management and leaves the selected profile and firewall enabled state in place.
 ---
 
 # synology_firewall (Resource)
 
-Selected DSM firewall profile, enabled policy and provider-initiated activation, with ordered per-interface rules. Stored profile drift is readable; kernel rules and out-of-band unapplied edits cannot be compared through this API. Import is mandatory. Existing profiles can be selected; profile creation, rename and deletion are outside this singleton. One resource owns its complete selected profile. Active policy changes require declared management source networks, an explicit global allow for the DSM HTTPS port and DSM port checking. These admission checks do not prove the declared sources match the real path or provide atomic rollback. Keep an independent management path. Destroy never disables the firewall or deletes profiles.
+Manage the selected DSM firewall profile and its ordered rules. For an import-only plan, use an empty resource block (for example, `resource "synology_firewall" "nas" {}`). You can then use the observed profile, port-check setting and adapter policy from DSM when planning an intentional change. Before changing rules, secure an independent management path and follow the [firewall change and recovery guide](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs/guides/firewall). Destroy releases Terraform management and leaves the selected profile and firewall enabled state in place.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_firewall.nas
+  id = "firewall"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_firewall" "nas" {
@@ -32,10 +45,6 @@ resource "synology_firewall" "nas" {
       }]
     }
   }
-}
-import {
-  to = synology_firewall.nas
-  id = "firewall"
 }
 ```
 

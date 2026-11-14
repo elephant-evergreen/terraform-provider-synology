@@ -3,18 +3,31 @@
 page_title: "synology_windows_discovery Resource - synology"
 subcategory: ""
 description: |-
-  Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it; reference synology_smb.enabled to establish matching policy and ordering. Destroy leaves discovery unchanged.
+  Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it. If Terraform manages the SMB service, reference its enabled attribute to order the changes. Destroy leaves discovery unchanged.
 ---
 
 # synology_windows_discovery (Resource)
 
-Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it; reference synology_smb.enabled to establish matching policy and ordering. Destroy leaves discovery unchanged.
+Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it. If Terraform manages the SMB service, reference its enabled attribute to order the changes. Destroy leaves discovery unchanged.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_windows_discovery.main
+  id = "windows_discovery"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_windows_discovery" "main" {
-  enabled = synology_smb.main.enabled
+  enabled = true
 }
 ```
 

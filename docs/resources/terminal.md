@@ -10,7 +10,20 @@ description: |-
 
 SSH and Telnet terminal-access policy. Manage its listening port, console access and selected SSH cryptographic algorithms here. Omitted flags preserve their current values; destroy leaves DSM settings unchanged.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_terminal.main
+  id = "terminal"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_terminal" "main" {

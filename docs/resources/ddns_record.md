@@ -3,14 +3,27 @@
 page_title: "synology_ddns_record Resource - synology"
 subcategory: ""
 description: |-
-  A DSM DDNS provider record. Existing records require import; Create rejects collisions. Credentials are write-only and versioned. Synology/TWNIC hostname registration, certificate issuance and account enrollment remain separate DSM workflows; their existing records can be imported but not renamed here. Automatic address observations are not equivalent to published DNS success. Deletion is protected by default and can affect external DNS registration.
+  A DSM DDNS provider record. Find the existing record ID with data.synology_ddns, then import it with the observed provider_id. For adoption, omit password_wo and keep password_version = 0. The configuration example shows a new record and supplies a credential. Synology/TWNIC hostname registration, certificate issuance and account enrollment remain separate DSM workflows; their existing records can be imported but not renamed here. Automatic address observations are not equivalent to published DNS success. Deletion is protected by default and can affect external DNS registration.
 ---
 
 # synology_ddns_record (Resource)
 
-A DSM DDNS provider record. Existing records require import; Create rejects collisions. Credentials are write-only and versioned. Synology/TWNIC hostname registration, certificate issuance and account enrollment remain separate DSM workflows; their existing records can be imported but not renamed here. Automatic address observations are not equivalent to published DNS success. Deletion is protected by default and can affect external DNS registration.
+A DSM DDNS provider record. Find the existing record ID with `data.synology_ddns`, then import it with the observed `provider_id`. For adoption, omit `password_wo` and keep `password_version = 0`. The configuration example shows a new record and supplies a credential. Synology/TWNIC hostname registration, certificate issuance and account enrollment remain separate DSM workflows; their existing records can be imported but not renamed here. Automatic address observations are not equivalent to published DNS success. Deletion is protected by default and can affect external DNS registration.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_ddns_record.nas
+  id = "example-record"
+}
+```
+
+## Example configuration
 
 ```terraform
 variable "ddns_password" {

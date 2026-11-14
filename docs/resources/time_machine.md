@@ -10,17 +10,26 @@ description: |-
 
 Bonjour Time Machine advertisement and backup-share selection. Share data, quotas and backup execution are managed separately. Import adopts current policy; destroy never removes shares or backups.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_time_machine.nas
+  id = "time_machine"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_time_machine" "nas" {
   smb_enabled = true
   afp_enabled = false
-  shares      = [synology_shared_folder.backups.name]
-}
-import {
-  to = synology_time_machine.nas
-  id = "time_machine"
+  shares      = ["backups"]
 }
 ```
 

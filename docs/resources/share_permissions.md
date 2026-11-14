@@ -10,15 +10,28 @@ description: |-
 
 Own the complete explicit local-user and local-group permission policy for one shared folder. Each map value is read_only, read_write or deny. Omission means no explicit grant or deny, rather than denial. Effective access also depends on group membership and file ACLs. Import by shared-folder name to preserve an existing policy. Creating this configuration resource applies the declared policy. Destroy only releases management and leaves permissions unchanged. When managing accounts in the same configuration, depend on all account resources so policy snapshots run after account creation.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_share_permissions.archive
+  id = "archive"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_share_permissions" "archive" {
-  share = synology_shared_folder.archive.name
+  share = "archive"
   users = {}
   groups = {
-    administrators             = "read_write"
-    (synology_group.team.name) = "read_only"
+    administrators = "read_write"
+    team           = "read_only"
   }
 }
 ```
