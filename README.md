@@ -1,6 +1,6 @@
 # Terraform Provider for Synology
 
-Manage file shares, local accounts, permissions, and supported Synology DSM services over verified HTTPS. Check the [verified DSM versions and operations](docs/compatibility.md) before adopting a NAS. Live writes remain experimental. See the [Terraform Registry reference](https://registry.terraform.io/providers/elephant-evergreen/synology/0.4.0/docs) and read the [release notes](https://github.com/elephant-evergreen/terraform-provider-synology/releases) before changing versions.
+Manage file shares, local accounts, permissions, and supported Synology DSM services over verified HTTPS. Check the [verified DSM versions and operations](docs/compatibility.md) before adopting a NAS. Live writes remain experimental. See the [Terraform Registry reference](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs) and read the [release notes](https://github.com/elephant-evergreen/terraform-provider-synology/releases) before changing versions.
 
 ## Check the NAS connection
 
@@ -15,7 +15,7 @@ terraform {
   required_providers {
     synology = {
       source  = "elephant-evergreen/synology"
-      version = "= 0.4.0"
+      version = "~> 0.4.0"
     }
   }
 }
@@ -24,6 +24,8 @@ provider "synology" {}
 
 data "synology_network_interfaces" "nas" {}
 ```
+
+Keep `.terraform.lock.hcl` in version control. To pick up a compatible patch, read its release notes, run `terraform init -upgrade`, and review the lockfile and plan.
 
 ## Adopt an existing NAS
 

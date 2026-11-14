@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command=${1:-}
+tag=${2:-}
+[[ -n $tag ]] || { printf '%s\n' 'Usage: bin/release check-tag|verify|publish|verify-registry TAG [OWNER/REPO]' >&2; exit 2; }
+notes="release-notes/$tag.md"
+version=${tag#v}
+prerelease=false
+if [[ $tag == *-rc.* ]]; then prerelease=true; fi
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+verify_tag() {
+  [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] ||
+    fail "Use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N."
+  [[ $(git cat-file -t "refs/tags/$tag") == tag ]] || fail "Create an annotated tag."
+  [[ $(git rev-parse "refs/tags/$tag^{commit}") == "$(git rev-parse HEAD)" ]] ||
+    fail "Check out the tagged commit."
+  git merge-base --is-ancestor HEAD origin/main || fail "Tag a commit on origin/main."
+  git show "HEAD:$notes" | cmp - "$notes" || fail "Commit the exact release notes at $notes."
+  awk 'NF && !seen++ { valid = /^## (Upgrade notes|Breaking changes)$/ } END { exit !(valid && seen >= 2) }' "$notes" ||
+    fail "Start $notes with Upgrade notes or Breaking changes and include upgrade guidance."
+}
+
+verify_registry() {
+  install_dir=$(mktemp -d)
+  registry_os=$(go env GOOS)
+  registry_arch=$(go env GOARCH)
+  trap 'rm -rf -- "$install_dir"' EXIT
+  namespace=${repo%/*}
+  provider=${project#terraform-provider-}
+  source="$namespace/$provider"
+  cat > "$install_dir/main.tf" <<EOF
+terraform {
+  required_providers {
+    $provider = {
+      source  = "$source"
+      version = "= $version"
+    }
+  }
+}
+EOF
+  registry_url="https://registry.terraform.io/v1/providers/$source/$version/download/$registry_os/$registry_arch"
+  for ((attempt=1; attempt<=60; attempt++)); do
+    if curl --fail --silent --max-time 15 "$registry_url" |
+      jq -e --arg base "https://github.com/$repo/releases/download/$tag/${prefix}_" '.download_url | startswith($base)' >/dev/null; then
+      (
+        unset TF_DATA_DIR TF_PLUGIN_CACHE_DIR TF_CLI_ARGS TF_CLI_ARGS_init
+        export TF_CLI_CONFIG_FILE=/dev/null
+        terraform -chdir="$install_dir" init -backend=false -input=false -no-color
+      ) | tee "$install_dir/init.log"
+      grep -F "Installed $source $tag (" "$install_dir/init.log" |
+        grep -Eq '\((self-signed, key ID |signed by )'
+      return
+    fi
+    sleep 10
+  done
+  fail "Terraform Registry has not indexed $tag. Retry verification without modifying the published release."
+}
+
+project=$(awk '/^module / {sub(/^.*\//, "", $2); print $2; exit}' go.mod)
+prefix="${project}_${version}"
+repo=${3:-}
+if [[ $command == verify-registry ]]; then
+  [[ -n $repo ]] || fail "Supply the GitHub repository."
+  verify_tag
+  verify_registry
+  exit
+fi
+
+verify_tag
+[[ $command != check-tag ]] || exit 0
+[[ $command == verify || $command == publish ]] || fail "Use check-tag, verify, or publish."
+
+sums="${prefix}_SHA256SUMS"
+manifest="${prefix}_manifest.json"
+cp terraform-registry-manifest.json "dist/$manifest"
+
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+key=${RELEASE_PUBLIC_KEY:-keys/release.asc}
+gpg --batch --dearmor --output "$scratch/keyring.gpg" "$key"
+gpgv --keyring "$scratch/keyring.gpg" "dist/$sums.sig" "dist/$sums"
+
+assets=("$sums" "$sums.sig" "$manifest")
+signed=("$manifest")
+for platform in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+  archive="${prefix}_$platform.zip"
+  signed+=("$archive")
+  assets+=("$archive")
+done
+printf '%s\n' "${signed[@]}" | LC_ALL=C sort > "$scratch/expected"
+awk '{print $2}' "dist/$sums" | LC_ALL=C sort | cmp - "$scratch/expected"
+(
+  cd dist
+  shasum -a 256 -c "$sums"
+)
+[[ $command != verify ]] || exit 0
+
+[[ -n $repo ]] || fail "Supply the GitHub repository."
+remote_tag=$(gh api "repos/$repo/git/ref/tags/$tag" --jq 'select(.object.type == "tag") | .object.sha')
+[[ $remote_tag == "$(git rev-parse "refs/tags/$tag")" ]] ||
+  fail "$repo does not have the verified annotated tag $tag."
+
+releases="repos/$repo/releases"
+existing=$(gh api --paginate --slurp "$releases?per_page=100" |
+  jq -ce --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | if length > 1 then error("More than one release uses this tag") else .[0] end // {}')
+if [[ $(jq -r '.draft' <<< "$existing") == false ]]; then
+  printf 'Release %s is already published.\n' "$tag"
+  exit 0
+fi
+
+if [[ $existing == '{}' ]]; then
+  gh release create "$tag" --repo "$repo" --verify-tag --draft --prerelease="$prerelease" --title "$tag" --notes-file "$notes"
+  release_id=$(gh release view "$tag" --repo "$repo" --json databaseId --jq '.databaseId')
+else
+  release_id=$(jq -er '.id' <<< "$existing")
+fi
+
+endpoint="$releases/$release_id"
+draft=$(gh api "$endpoint")
+jq -e --arg tag "$tag" --argjson prerelease "$prerelease" --rawfile notes "$notes" '
+  .draft == true and .tag_name == $tag and .prerelease == $prerelease and .body == $notes
+' <<< "$draft" >/dev/null || fail "Draft $tag does not match its tagged notes or prerelease status."
+
+expected=$(
+  cd dist
+  shasum -a 256 "${assets[@]}" |
+    jq -Rn '[inputs | split("  ") | {name: .[1], digest: ("sha256:" + .[0]), state: "uploaded"}] | sort_by(.name)'
+)
+jq -e --argjson expected "$expected" '
+  ([.assets[].name] - [$expected[].name]) == []
+' <<< "$draft" >/dev/null || fail "Draft $tag contains unexpected assets."
+
+upload=()
+for asset in "${assets[@]}"; do
+  if ! jq -e --argjson expected "$expected" --arg asset "$asset" '
+    any(.assets[]; {name, digest, state} == ($expected[] | select(.name == $asset)))
+  ' <<< "$draft" >/dev/null; then
+    upload+=("dist/$asset")
+  fi
+done
+if (( ${#upload[@]} )); then
+  gh release upload "$tag" --repo "$repo" --clobber "${upload[@]}"
+fi
+
+gh api "$endpoint" | jq -e --arg tag "$tag" --argjson prerelease "$prerelease" \
+  --rawfile notes "$notes" --argjson expected "$expected" '
+  .draft == true and .tag_name == $tag and .prerelease == $prerelease and .body == $notes
+  and ([.assets[] | {name, digest, state}] | sort_by(.name)) == $expected
+' >/dev/null || fail "Uploaded assets or notes for $tag failed verification. The release remains a draft."
+publish_args=(-F draft=false)
+if [[ $prerelease == true ]]; then publish_args+=(-f make_latest=false); fi
+gh api --method PATCH "$endpoint" "${publish_args[@]}" |
+  jq -er --arg tag "$tag" 'select(.draft == false and .tag_name == $tag) | .html_url'
