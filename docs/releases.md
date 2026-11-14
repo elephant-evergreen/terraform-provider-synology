@@ -2,12 +2,18 @@
 
 Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow stages the reviewed per-version Markdown and signed packages in a GitHub draft for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
 
+## Decide when to release
+
+Merge verified changes as they are ready. Publish when users need a new feature, a fix, or an important clarification. Release a compatible fix promptly when it blocks real use or addresses a security issue. Combine routine fixes, internal maintenance, and documentation improvements into the next useful release.
+
+Before scheduling a breaking release, look for a compatible default, a deprecation period, or a state migration that preserves existing objects. Group related incompatible changes so users make one upgrade. Publish once the upgrade instructions and representative plans agree.
+
 ## Choose the version
 
 | Change | Version while on 0.x |
 | --- | --- |
 | Existing configurations or state require migration, or a documented operation changes incompatibly | Next minor, such as `v0.4.0` → `v0.5.0` |
-| Compatible feature, fix, documentation, or dependency update | Next patch, such as `v0.4.0` → `v0.4.1` |
+| Compatible feature, fix, documentation, or dependency update | When released, next patch, such as `v0.4.0` → `v0.4.1` |
 | Optional release candidate for explicit testing | Target version plus `-rc.1`, then `-rc.2` for a revised candidate |
 
 When a change simplifies an early interface, preserve NAS data, configuration, and resource identities through the documented upgrade. Treat incompatible changes to defaults, import IDs, deletion behavior, or state formats as upgrade changes. Once the provider reaches 1.0, use [Semantic Versioning](https://semver.org/).
