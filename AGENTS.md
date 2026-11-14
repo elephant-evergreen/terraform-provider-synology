@@ -11,5 +11,5 @@
 - Keep resource passwords write-only, enforce verified HTTPS, reject redirects, and redact credentials, response bodies, and session tokens from logs and errors.
 - Ordinary tests use synthetic local fixtures and the shipping provider. Live destructive tests require an explicitly authorized disposable environment.
 - Never commit credentials, private identifiers, DSM exports, state, plan files, or personal data. Do not add code comments unless requested.
-- Run bin/check-for-agent before publication. State exact DSM compatibility evidence and remaining limits.
+- Run mise run check before publication. State exact DSM compatibility evidence and remaining limits.
 - Preserve MPL-2.0 and third-party notices. AI-assisted commits require a reason and Co-Authored-By trailer.

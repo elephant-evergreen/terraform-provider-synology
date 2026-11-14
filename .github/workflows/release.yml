@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+
 jobs:
   release:
     runs-on: ubuntu-26.04
@@ -24,27 +27,26 @@ jobs:
             echo "::error::Use a vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N release tag."
             exit 1
           fi
+          if [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" != tag ]]; then
+            echo "::error::Create an annotated tag with git tag -a."
+            exit 1
+          fi
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::Tag a reviewed commit on main."
             exit 1
           fi
           notes="release-notes/${GITHUB_REF_NAME}.md"
-          if ! grep -q '[^[:space:]]' "$notes"; then
-            echo "::error::Commit non-empty release notes at $notes before tagging."
+          if [[ ! -f "$notes" ]] ||
+             [[ ! "$(awk 'NF { print; exit }' "$notes")" =~ ^'## '(Upgrade\ notes|Breaking\ changes)$ ]] ||
+             [[ "$(awk 'NF { count++ } END { print count+0 }' "$notes")" -lt 2 ]]; then
+            echo "::error::Add release notes at $notes starting with Upgrade notes or Breaking changes."
             exit 1
           fi
           printf 'path=%s\n' "$notes" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
-          go-version-file: go.mod
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
-        with:
-          terraform_version: '1.17.1'
-          terraform_wrapper: false
-      - run: bin/check-for-agent
-      - run: go tool govulncheck ./...
-      - run: bin/generate-licenses
-      - run: git diff --exit-code -- THIRD_PARTY_LICENSES.txt
+          version: 2026.11.0
+      - run: mise run check
       - name: Import release signing key
         id: signing
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd

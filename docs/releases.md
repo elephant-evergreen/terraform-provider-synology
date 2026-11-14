@@ -1,6 +1,6 @@
 # Releasing the Synology provider
 
-Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow publishes the reviewed per-version Markdown file as the release body and attaches the signed packages for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
+Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow stages the reviewed per-version Markdown and signed packages in a GitHub draft for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
 
 ## Choose the version
 
@@ -10,15 +10,18 @@ Users find changes and upgrade instructions in [GitHub Releases](https://github.
 | Compatible feature, fix, documentation, or dependency update | Next patch, such as `v0.4.0` → `v0.4.1` |
 | Optional release candidate for explicit testing | Target version plus `-rc.1`, then `-rc.2` for a revised candidate |
 
-When a change simplifies an early interface, preserve NAS data, configuration, and resource identities through the documented upgrade. Treat incompatible changes to defaults, import IDs, deletion behavior, or state formats as upgrade changes. After 1.0, use [Semantic Versioning](https://semver.org/).
+When a change simplifies an early interface, preserve NAS data, configuration, and resource identities through the documented upgrade. Treat incompatible changes to defaults, import IDs, deletion behavior, or state formats as upgrade changes. Once the provider reaches 1.0, use [Semantic Versioning](https://semver.org/).
 
 ## Write the release notes
 
-Add `release-notes/<tag>.md` in English to the release PR. Use the sections below when they apply.
+Add `release-notes/<tag>.md` in English to the release PR. Write for someone deciding whether to upgrade.
 
-- **Upgrade notes** first. Name the affected resources and versions, what changes for existing users, and what to do before applying. Link to a versioned upgrade guide if the steps require HCL or state migration. State whether users need to change configuration or state. For a migration, include what to back up, an example of the expected plan, and how to recover if the upgrade fails.
-- **Highlights** and **Fixes**. Start each entry with the affected resource or setting. Describe what users will observe and link to the relevant PR. For a larger release, link to the GitHub comparison against the previous stable tag. Omit empty sections.
-- **Compatibility**. Identify the NAS model and DSM version covered by live verification. Distinguish read and import from live writes and recovery. Link to the [DSM compatibility evidence](compatibility.md) at the release tag, using an absolute URL so it also works in GitHub Releases.
+- Start with **Breaking changes** when existing users must act or can encounter incompatible behavior. For each change, identify the resource or setting, affected versions and configurations, what changed, and the action to take before applying. Link to a versioned upgrade guide for multi-step changes. Include a pre-upgrade plan, what to back up, the expected post-upgrade plan, and how to recover. State if an older provider cannot read upgraded state.
+- Start with **Upgrade notes** for other releases. State whether existing users need to change HCL or state. For a first release, tell readers how to adopt existing objects or settings.
+- Use **Highlights** and **Fixes** where applicable. Name the affected resource or setting and explain the behavior the user will see. Link to the relevant PR for context. Use **Compatibility** when supported platforms or verification change, and distinguish fixture results from live verification.
+- End with a GitHub comparison from the previous public stable tag to this tag. For the first release, link to the versioned provider reference instead. Use absolute URLs and pin links to supporting documentation to the tag so they work in GitHub Releases.
+
+A compatible fix can be brief. For example, lead with `## Upgrade notes` and “Existing configurations and state need no changes.” Follow with the affected resource and the outcome under `## Fixes`, then the tag comparison.
 
 ## Publish and verify
 
@@ -31,8 +34,9 @@ Add `release-notes/<tag>.md` in English to the release PR. Use the sections belo
    git push origin "refs/tags/$release_tag"
    ```
 
-3. Wait for Release to pass. Compare the GitHub Release body with the tagged Markdown file, check the signed assets, and confirm the tag appears in Terraform Registry with its versioned docs. In a fresh directory, pin that exact version and run `terraform init` to verify normal discovery and signature checks. For a release candidate, verify explicit installation and the GitHub prerelease marker.
-4. If a run fails before publication, inspect the GitHub Release and Registry first. Retry the same tag after resolving a transient failure. If a partial draft blocks asset upload on retry, remove that unpublished draft and rerun the workflow. If the tagged files need a correction, merge it and use a new version. Once published, keep the tag and signed artifacts fixed. Publish factual corrections to the notes in the GitHub Release body with a dated correction.
+3. Wait for the **Release** workflow for that tag to succeed. Inspect the draft. Confirm it contains the reviewed notes, the four platform ZIPs, the protocol manifest, the SHA-256 checksum list and its detached signature. Confirm a candidate is marked as a prerelease. When the draft is ready, publish it with `gh release edit "$release_tag" --draft=false`.
+4. Wait until Terraform Registry lists the version. In a fresh directory, pin the exact version and run `terraform init` against the public Registry without a plugin cache or mirror. Confirm that Terraform reports a signed installation and that the Registry renders the docs for that version. A candidate requires an exact pin. A higher-version candidate may appear as the newest version on the Registry page even though Terraform only selects it when explicitly pinned.
+5. If staging fails, inspect the GitHub Release first. Retry a transient failure against the same tag after removing any incomplete unpublished draft. If the tagged files need a correction, merge it and use a new version. Keep published tags and signed assets fixed. Put factual corrections in the GitHub Release body under a dated correction.
 
 ## Registry setup
 
