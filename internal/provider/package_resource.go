@@ -272,7 +272,7 @@ func (r *packageResource) Read(ctx context.Context, req resource.ReadRequest, re
 		current, err = r.resumePackage(ctx, *operation)
 	} else {
 		var records map[string]installedPackage
-		records, err = readInstalledPackages(ctx, r.client)
+		records, err = refreshInstalledPackages(ctx, r.client)
 		if value, exists := records[previous.ID.ValueString()]; exists {
 			current = &value
 		}

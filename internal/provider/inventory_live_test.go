@@ -41,7 +41,7 @@ func TestLiveInventoryReadOnly(t *testing.T) {
 	}
 	center := NewPackageCenterResource().(*packageCenterResource)
 	center.client = c
-	if _, err := center.readPackageCenter(ctx); err != nil {
+	if _, err := center.readPackageCenter(ctx, readInstalledPackages); err != nil {
 		t.Fatal(err)
 	}
 	interfaces, err := readPhysicalInterfaces(ctx, c)
