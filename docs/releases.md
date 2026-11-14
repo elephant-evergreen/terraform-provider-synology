@@ -1,6 +1,6 @@
 # Releasing the Synology provider
 
-Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow stages the reviewed per-version Markdown and signed packages in a GitHub draft for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
+Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow verifies the tagged notes and signed packages before publishing to GitHub for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
 
 ## Decide when to release
 
@@ -40,9 +40,8 @@ A compatible fix can be brief. For example, lead with `## Upgrade notes` and “
    git push origin "refs/tags/$release_tag"
    ```
 
-3. Wait for the **Release** workflow for that tag to succeed. Inspect the draft. Confirm it contains the reviewed notes, the four platform ZIPs, the protocol manifest, the SHA-256 checksum list and its detached signature. Confirm a candidate is marked as a prerelease. When the draft is ready, publish it with `gh release edit "$release_tag" --draft=false`.
-4. Wait until Terraform Registry lists the version. In a fresh directory, pin the exact version and run `terraform init` against the public Registry without a plugin cache or mirror. Confirm that Terraform reports a signed installation and that the Registry renders the docs for that version. A candidate requires an exact pin. A higher-version candidate may appear as the newest version on the Registry page even though Terraform only selects it when explicitly pinned.
-5. If staging fails, inspect the GitHub Release first. Retry a transient failure against the same tag after removing any incomplete unpublished draft. If the tagged files need a correction, merge it and use a new version. Keep published tags and signed assets fixed. Put factual corrections in the GitHub Release body under a dated correction.
+3. The **Release** workflow checks the tagged commit, signs the packages, and creates or resumes a GitHub draft. It compares the draft notes with the tagged file and checks each uploaded asset digest before publishing. A failed upload or mismatched digest can be retried on the same tag. If tagged files need correction, use a new version. Keep published tags and assets fixed. Put factual corrections in the GitHub release body under a dated correction.
+4. The workflow waits for Terraform Registry and verifies a signed installation of the exact version. If ingestion times out, rerun the workflow. It leaves an already published release intact and checks the Registry again. A candidate requires an exact pin and may appear as the newest version on the Registry page.
 
 ## Registry setup
 
