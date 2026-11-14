@@ -201,31 +201,35 @@ func (c *Client) Group(ctx context.Context, name string) (Group, error) {
 	}
 	for _, g := range groups {
 		if g.Name == name {
-			var result struct {
-				Groups []json.RawMessage `json:"groups"`
-				Errors []json.RawMessage `json:"errors"`
-			}
-			if err := c.Call(ctx, "SYNO.Core.Group", 1, "get", url.Values{"name": {JSON([]string{name})}}, &result); err != nil {
-				return Group{}, err
-			}
-			if len(result.Errors) != 0 || len(result.Groups) != 1 {
-				return Group{}, errors.New("DSM group lookup returned an incomplete or ambiguous identity")
-			}
-			var actual Group
-			var fields map[string]json.RawMessage
-			if json.Unmarshal(result.Groups[0], &actual) != nil || json.Unmarshal(result.Groups[0], &fields) != nil {
-				return Group{}, errors.New("DSM returned a malformed group")
-			}
-			if err := requireStrings(fields, "name", "description"); err != nil {
-				return Group{}, err
-			}
-			if actual.Name != name || actual.GID <= 0 {
-				return Group{}, errors.New("DSM group lookup returned an invalid identity")
-			}
-			return actual, nil
+			return c.groupDetails(ctx, name)
 		}
 	}
 	return Group{}, ErrNotFound
+}
+
+func (c *Client) groupDetails(ctx context.Context, name string) (Group, error) {
+	var result struct {
+		Groups []json.RawMessage `json:"groups"`
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if err := c.Call(ctx, "SYNO.Core.Group", 1, "get", url.Values{"name": {JSON([]string{name})}}, &result); err != nil {
+		return Group{}, err
+	}
+	if len(result.Errors) != 0 || len(result.Groups) != 1 {
+		return Group{}, errors.New("DSM group lookup returned an incomplete or ambiguous identity")
+	}
+	var actual Group
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(result.Groups[0], &actual) != nil || json.Unmarshal(result.Groups[0], &fields) != nil {
+		return Group{}, errors.New("DSM returned a malformed group")
+	}
+	if err := requireStrings(fields, "name", "description"); err != nil {
+		return Group{}, err
+	}
+	if actual.Name != name || actual.GID <= 0 {
+		return Group{}, errors.New("DSM group lookup returned an invalid identity")
+	}
+	return actual, nil
 }
 
 func (c *Client) UserGroups(ctx context.Context, name string, uid int64) ([]string, error) {
