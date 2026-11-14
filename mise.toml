@@ -1,6 +1,23 @@
 [tools]
-go = "1.27.3"
+go = "1.27.4"
 terraform = "1.17.1"
 
 [tasks.check]
-run = "bin/check-for-agent"
+description = "Check formatting, modules, tests, build, and generated documentation"
+run = [
+  'test -z "$(gofmt -l main.go internal)"',
+  "go mod verify",
+  "go vet ./...",
+  'TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test -race -p 2 ./...',
+  "go build -o /dev/null .",
+  "terraform fmt -check -recursive examples",
+  "go tool govulncheck ./...",
+  "bin/generate-licenses",
+  "git diff --exit-code -- THIRD_PARTY_LICENSES.txt",
+  "go tool tfplugindocs generate --provider-name synology",
+  "git diff --exit-code -- docs",
+]
+
+[tasks.check.env]
+TF_ACC = "1"
+SYNOLOGY_LIVE_READ = "0"

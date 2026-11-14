@@ -1,16 +1,33 @@
 # Terraform Provider for Synology
 
-Manage DSM shares, local accounts and permissions, file-sharing services, terminal/SSH policy, SNMP, time, user homes, physical networking, selected firewall policy, QuickConnect, DDNS and eligible packages using typed Terraform resources and direct HTTPS communication.
+Manage file shares, local accounts, permissions, and supported Synology DSM services over verified HTTPS. Check the [verified DSM versions and operations](docs/compatibility.md) before adopting a NAS. Live writes remain experimental. See the [Terraform Registry reference](https://registry.terraform.io/providers/elephant-evergreen/synology/0.4.0/docs) and read the [release notes](https://github.com/elephant-evergreen/terraform-provider-synology/releases) before changing versions.
 
-The provider is available on the [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs). Live read and import compatibility are verified separately from hardware writes, which remain experimental. See [compatibility](docs/compatibility.md), [design](docs/design.md) and [verification boundaries](docs/testing.md).
+## Check the NAS connection
+
+Set `SYNOLOGY_ENDPOINT` to the DSM HTTPS origin and supply `SYNOLOGY_USERNAME` and `SYNOLOGY_PASSWORD` through your usual secret management. If DSM uses a private certificate authority, set `SYNOLOGY_CA_FILE` to its PEM bundle.
+
+Save the following as `main.tf` in an empty directory, then run `terraform init` and `terraform plan`. The data source reads physical network interfaces without changing DSM settings.
+
+```hcl
+terraform {
+  required_version = ">= 1.17.1"
+
+  required_providers {
+    synology = {
+      source  = "elephant-evergreen/synology"
+      version = "= 0.4.0"
+    }
+  }
+}
+
+provider "synology" {}
+
+data "synology_network_interfaces" "nas" {}
+```
 
 ## Adopt an existing NAS
 
-Existing named objects (shared folders, users and groups) must be imported. Service singletons and share-permission policies configure an existing DSM setting; their Create operation applies the declared configuration. Import them first when adopting a running NAS without changes. Import never creates a replacement, resets a password, changes a share permission or modifies user files. Shared folders, users and groups are protected against deletion by default. Destroying a service or share-permission policy only releases Terraform management and leaves DSM settings in place.
-
-Use Registry source `elephant-evergreen/synology`, pin version `0.4.0`, and install it using normal `terraform init`. Connection settings may be supplied through `SYNOLOGY_ENDPOINT`, `SYNOLOGY_USERNAME` and `SYNOLOGY_PASSWORD`, or ephemeral values in the provider configuration. The endpoint must have a valid HTTPS certificate; a private CA can be supplied with `ca_file`.
-
-Use ordinary Terraform import blocks and review the resulting plan before applying it. An adoption plan must contain imports and zero creates, updates, replacements or deletions. Configuration and account information enter state; passwords and transient DSM sessions must not.
+Use Terraform import blocks for existing shares, users, groups, or service settings. Review an import-only plan with zero creates, updates, replacements, or deletions. Import leaves DSM configuration and user files intact. Passwords and transient sessions stay out of state. Shared folders, users, and groups are protected against deletion by default. Destroying a service or share-permission resource releases Terraform management and leaves the DSM settings in place.
 
 For SNMP adoption and explicit secret changes, see the [SNMP guide](docs/guides/snmp.md). Import leaves community and v3 passwords unchanged; unreadable secrets cannot be drift-detected. Applied SNMP secret versions protect their state from Destroy; release management explicitly with a removed block using destroy = false.
 

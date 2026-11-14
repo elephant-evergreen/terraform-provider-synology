@@ -1,11 +1,45 @@
-# Releases
+# Releasing the Synology provider
 
-The published Registry source is [elephant-evergreen/synology](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs). Version 0.3.0 has been installed through normal Terraform Registry discovery and verified against the release signature and binary hash. Publish only a reviewed default-branch commit with successful checks and evidence matching its documented DSM support.
+Users find changes and upgrade instructions in [GitHub Releases](https://github.com/elephant-evergreen/terraform-provider-synology/releases). The release workflow stages the reviewed per-version Markdown and signed packages in a GitHub draft for [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology).
 
-The release workflow builds protocol-6 packages for Linux and macOS on amd64 and arm64, creates SHA-256 checksums and a detached GPG signature, and uploads the Registry manifest. Signing credentials are available only to the tag-triggered release job, never ordinary pull requests.
+## Choose the version
 
-Register the public signing key and repository in the existing elephant-evergreen HCP Terraform public namespace. Do not expose private key material or request broader repository access than required. Confirm Registry ingestion and a fresh, normal terraform init with the pinned version and verified signature before calling a release available.
+| Change | Version while on 0.x |
+| --- | --- |
+| Existing configurations or state require migration, or a documented operation changes incompatibly | Next minor, such as `v0.4.0` → `v0.5.0` |
+| Compatible feature, fix, documentation, or dependency update | Next patch, such as `v0.4.0` → `v0.4.1` |
+| Optional release candidate for explicit testing | Target version plus `-rc.1`, then `-rc.2` for a revised candidate |
 
-The namespace signing identity is shared with the GL.iNet provider. Its public key is [keys/release.asc](../keys/release.asc), fingerprint `9699ECB55B3E8B042C68A4B063527B92B224D3DD`. The encrypted private key and passphrase are provided only through the tag workflow's GPG_PRIVATE_KEY and PASSPHRASE repository secrets.
+When a change simplifies an early interface, preserve NAS data, configuration, and resource identities through the documented upgrade. Treat incompatible changes to defaults, import IDs, deletion behavior, or state formats as upgrade changes. Once the provider reaches 1.0, use [Semantic Versioning](https://semver.org/).
 
-Keep the signing identity backed up outside Git. A GitHub release alone does not demonstrate Registry installation or NAS compatibility.
+## Write the release notes
+
+Add `release-notes/<tag>.md` in English to the release PR. Write for someone deciding whether to upgrade.
+
+- Start with **Breaking changes** when existing users must act or can encounter incompatible behavior. For each change, identify the resource or setting, affected versions and configurations, what changed, and the action to take before applying. Link to a versioned upgrade guide for multi-step changes. Include a pre-upgrade plan, what to back up, the expected post-upgrade plan, and how to recover. State if an older provider cannot read upgraded state.
+- Start with **Upgrade notes** for other releases. State whether existing users need to change HCL or state. For a first release, tell readers how to adopt existing objects or settings.
+- Use **Highlights** and **Fixes** where applicable. Name the affected resource or setting and explain the behavior the user will see. Link to the relevant PR for context. Use **Compatibility** when supported platforms or verification change, and distinguish fixture results from live verification.
+- End with a GitHub comparison from the previous public stable tag to this tag. For the first release, link to the versioned provider reference instead. Use absolute URLs and pin links to supporting documentation to the tag so they work in GitHub Releases.
+
+A compatible fix can be brief. For example, lead with `## Upgrade notes` and “Existing configurations and state need no changes.” Follow with the affected resource and the outcome under `## Fixes`, then the tag comparison.
+
+## Publish and verify
+
+1. Review the release notes with the changes they describe. For an incompatible release, exercise the upgrade from the previous public version with representative existing HCL and state. Confirm that the documented procedure preserves existing objects and settings except for explicitly documented changes. Check that the plan contains only the intended actions before applying it in a test environment.
+2. After the PR is merged and its main-branch Check workflow passes, tag that exact commit. From a checkout with access to the repository, set `reviewed_commit` to that SHA and `release_tag` to the version matching the notes. Then run:
+
+   ```sh
+   git fetch origin main --tags &&
+   git tag -a "$release_tag" "$reviewed_commit" -m "Release $release_tag" &&
+   git push origin "refs/tags/$release_tag"
+   ```
+
+3. Wait for the **Release** workflow for that tag to succeed. Inspect the draft. Confirm it contains the reviewed notes, the four platform ZIPs, the protocol manifest, the SHA-256 checksum list and its detached signature. Confirm a candidate is marked as a prerelease. When the draft is ready, publish it with `gh release edit "$release_tag" --draft=false`.
+4. Wait until Terraform Registry lists the version. In a fresh directory, pin the exact version and run `terraform init` against the public Registry without a plugin cache or mirror. Confirm that Terraform reports a signed installation and that the Registry renders the docs for that version. A candidate requires an exact pin. A higher-version candidate may appear as the newest version on the Registry page even though Terraform only selects it when explicitly pinned.
+5. If staging fails, inspect the GitHub Release first. Retry a transient failure against the same tag after removing any incomplete unpublished draft. If the tagged files need a correction, merge it and use a new version. Keep published tags and signed assets fixed. Put factual corrections in the GitHub Release body under a dated correction.
+
+## Registry setup
+
+The public source is `elephant-evergreen/synology`. The release workflow builds Linux and macOS packages for amd64 and arm64, and publishes a protocol 6 manifest, SHA-256 checksums, and a detached GPG signature.
+
+The [release public key](../keys/release.asc) is registered in the HCP Terraform public namespace with access to this repository through the Terraform Cloud GitHub App. Keep the private signing key and passphrase in the repository's `GPG_PRIVATE_KEY` and `PASSPHRASE` Actions secrets and back up the signing identity outside Git. See the [Terraform Registry publication guide](https://developer.hashicorp.com/terraform/registry/providers/publishing) when setting up or rotating the signing identity.

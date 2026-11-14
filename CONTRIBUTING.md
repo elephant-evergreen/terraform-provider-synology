@@ -1,6 +1,6 @@
 # Contributing
 
-Use the pinned tools from mise.toml and run bin/check-for-agent. Keep public documentation and diagnostics in English, examples synthetic, and all credentials and device exports outside Git.
+Use the pinned tools from mise.toml and run mise run check. Keep public documentation and diagnostics in English, examples synthetic, and all credentials and device exports outside Git.
 
 New resource support requires import without mutation, complete readback of managed readable fields, stable no-op plans, external-change detection, confirmed disappearance, protected deletion, and failure-path tests. A named-object resource must never acquire ownership of a pre-existing object during Create. Service singletons and complete permission policies are configuration resources: Create applies their declared settings, Import adopts unchanged, and Delete only releases management. Preserve state identity after partial creation and do not blindly retry ambiguous writes.
 
