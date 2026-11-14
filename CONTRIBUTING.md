@@ -10,4 +10,6 @@ Use only verified DSM API contracts. Fixture tests establish Terraform behavior 
 
 Add generated Registry documentation and synthetic examples with each public schema. Reconcile changes with the stated management boundary, including the distinction between an explicit deny and absence of a grant. Preserve MPL-2.0 and upstream notices. Include the reason for changes and an AI co-author trailer when applicable.
 
+Before designing a change that may affect compatibility, identify the HCL, state, and installed versions that rely on the existing behavior, including local builds. Before merging, exercise the upgrade with representative HCL and state. Verify that the plan contains only the intended actions and that the upgrade preserves existing objects and settings as documented. Record the versions, results, and any limits in the pull request. Put any required migration steps in the upgrade documentation.
+
 After dependency changes, run `bin/generate-licenses` and commit the resulting THIRD_PARTY_LICENSES.txt. CI checks the pinned Go vulnerability database tool and regenerates the license report used in release archives.
