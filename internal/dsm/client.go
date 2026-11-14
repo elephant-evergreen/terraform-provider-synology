@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 var ErrNotFound = errors.New("DSM object not found")
@@ -45,7 +47,8 @@ type Client struct {
 	token    string
 	apis     map[string]Capability
 	mu       sync.Mutex
-	mutation sync.Mutex
+	mutation sync.RWMutex
+	packages singleflight.Group
 }
 
 func (*Client) String() string   { return "DSM client (credentials redacted)" }

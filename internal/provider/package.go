@@ -12,7 +12,6 @@ import (
 )
 
 const packageAPI = "SYNO.Core.Package"
-const packageReadAdditional = `["status","ctl_uninstall","startable","is_uninstall_pages","dsm_apps","installed_info","install_type","autoupdate","silent_upgrade","beta"]`
 
 type installedPackage struct {
 	ID               string `tfsdk:"id"`
@@ -33,11 +32,15 @@ type installedPackage struct {
 var packageVolumePattern = regexp.MustCompile(`^/volume[1-9][0-9]*$`)
 
 func readInstalledPackages(ctx context.Context, client *dsm.Client) (map[string]installedPackage, error) {
-	var data struct {
-		Packages *[]json.RawMessage `json:"packages"`
-		Total    *int               `json:"total"`
-	}
-	if err := client.Call(ctx, packageAPI, 2, "list", url.Values{"offset": {"0"}, "limit": {"-1"}, "additional": {packageReadAdditional}}, &data); err != nil {
+	return decodeInstalledPackages(client.ListInstalledPackages(ctx))
+}
+
+func refreshInstalledPackages(ctx context.Context, client *dsm.Client) (map[string]installedPackage, error) {
+	return decodeInstalledPackages(client.RefreshInstalledPackages(ctx))
+}
+
+func decodeInstalledPackages(data dsm.InstalledPackages, err error) (map[string]installedPackage, error) {
+	if err != nil {
 		return nil, err
 	}
 	if data.Packages == nil {

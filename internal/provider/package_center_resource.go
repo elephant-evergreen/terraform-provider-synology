@@ -37,12 +37,12 @@ func (r *packageCenterResource) Schema(ctx context.Context, req resource.SchemaR
 	resp.Schema.Attributes["trust_level"] = schema.Int64Attribute{Computed: true, MarkdownDescription: r.definition.fields["trust_level"].description}
 	resp.Schema.Attributes["mail_configured"] = schema.BoolAttribute{Computed: true, MarkdownDescription: r.definition.fields["mail_configured"].description}
 }
-func (r *packageCenterResource) readPackageCenter(ctx context.Context) (types.Object, error) {
+func (r *packageCenterResource) readPackageCenter(ctx context.Context, readPackages func(context.Context, *dsm.Client) (map[string]installedPackage, error)) (types.Object, error) {
 	var raw map[string]json.RawMessage
 	if err := r.client.Call(ctx, r.definition.api, 1, "get", nil, &raw); err != nil {
 		return types.Object{}, err
 	}
-	packages, err := readInstalledPackages(ctx, r.client)
+	packages, err := readPackages(ctx, r.client)
 	if err != nil {
 		return types.Object{}, err
 	}
@@ -69,7 +69,7 @@ func (r *packageCenterResource) applyPackageCenter(ctx context.Context, config t
 	var actual types.Object
 	err = r.client.WithMutation(func() error {
 		var err error
-		actual, err = r.readPackageCenter(ctx)
+		actual, err = r.readPackageCenter(ctx, readInstalledPackages)
 		if err != nil {
 			return err
 		}
@@ -154,7 +154,7 @@ func (r *packageCenterResource) applyPackageCenter(ctx context.Context, config t
 		wait, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		for {
-			actual, err = r.readPackageCenter(wait)
+			actual, err = r.readPackageCenter(wait, readInstalledPackages)
 			if err != nil {
 				return err
 			}
@@ -174,7 +174,7 @@ func (r *packageCenterResource) applyPackageCenter(ctx context.Context, config t
 	return actual, err
 }
 func (r *packageCenterResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	prior, err := r.readPackageCenter(ctx)
+	prior, err := r.readPackageCenter(ctx, readInstalledPackages)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot inspect Package Center", err.Error())
 		return
@@ -191,7 +191,7 @@ func (r *packageCenterResource) Create(ctx context.Context, req resource.CreateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, value)...)
 }
 func (r *packageCenterResource) Read(ctx context.Context, _ resource.ReadRequest, resp *resource.ReadResponse) {
-	value, err := r.readPackageCenter(ctx)
+	value, err := r.readPackageCenter(ctx, refreshInstalledPackages)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot read Package Center", err.Error())
 		return

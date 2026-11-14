@@ -47,7 +47,7 @@ func (r *packagesDataSource) Configure(_ context.Context, req datasource.Configu
 	r.client = client
 }
 func (r *packagesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	records, err := readInstalledPackages(ctx, r.client)
+	records, err := refreshInstalledPackages(ctx, r.client)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot read installed packages", err.Error())
 		return
