@@ -32,7 +32,7 @@ func (p *synologyProvider) Metadata(_ context.Context, _ provider.MetadataReques
 }
 
 func (*synologyProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
-	resp.Schema = schema.Schema{MarkdownDescription: "Manage Synology DSM configuration directly over verified HTTPS. Import existing objects before managing them.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{MarkdownDescription: "Manage Synology DSM configuration directly over verified HTTPS. Import existing objects before managing them. See [release notes and upgrade instructions](https://github.com/elephant-evergreen/terraform-provider-synology/releases) before upgrading.", Attributes: map[string]schema.Attribute{
 		"endpoint": schema.StringAttribute{Optional: true, MarkdownDescription: "DSM HTTPS origin, such as https://nas.example.test:5001. Falls back to SYNOLOGY_ENDPOINT. Certificate verification is mandatory."},
 		"username": schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Existing DSM account. Configure username and password together, or supply both SYNOLOGY_USERNAME and SYNOLOGY_PASSWORD."},
 		"password": schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Existing DSM password. Supports ephemeral values. Falls back with username to SYNOLOGY_PASSWORD; never mixed across credential sources."},

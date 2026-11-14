@@ -4,6 +4,8 @@ Manage DSM shares, local accounts and permissions, file-sharing services, termin
 
 The provider is available on the [Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs). Live read and import compatibility are verified separately from hardware writes, which remain experimental. See [compatibility](docs/compatibility.md), [design](docs/design.md) and [verification boundaries](docs/testing.md).
 
+See [release notes and upgrade instructions](https://github.com/elephant-evergreen/terraform-provider-synology/releases) before changing the pinned version.
+
 ## Adopt an existing NAS
 
 Existing named objects (shared folders, users and groups) must be imported. Service singletons and share-permission policies configure an existing DSM setting; their Create operation applies the declared configuration. Import them first when adopting a running NAS without changes. Import never creates a replacement, resets a password, changes a share permission or modifies user files. Shared folders, users and groups are protected against deletion by default. Destroying a service or share-permission policy only releases Terraform management and leaves DSM settings in place.
