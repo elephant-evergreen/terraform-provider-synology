@@ -1,4 +1,5 @@
 version: 2
+project_name: terraform-provider-synology
 builds:
   - env: [CGO_ENABLED=0]
     mod_timestamp: '{{ .CommitTimestamp }}'
