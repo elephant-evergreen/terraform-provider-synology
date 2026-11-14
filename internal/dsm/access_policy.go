@@ -38,7 +38,7 @@ func (c *Client) AccessPolicy(ctx context.Context, share string) (AccessPolicy, 
 		return p, err
 	}
 	for _, g := range groups {
-		actual, err := c.Group(ctx, g.Name)
+		actual, err := c.groupDetails(ctx, g.Name)
 		if err != nil {
 			return p, err
 		}
