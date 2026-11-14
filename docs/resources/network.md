@@ -10,17 +10,26 @@ description: |-
 
 DSM hostname, DNS and general network policy. Interface addresses, DHCP leases and default routes have separate owners. A change can interrupt DSM connectivity; retain an independent management path and apply separately from router changes. Destroy leaves network settings unchanged.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_network.nas
+  id = "network"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_network" "nas" {
   hostname   = "nas"
   manual_dns = false
   ipv4_first = true
-}
-import {
-  to = synology_network.nas
-  id = "network"
 }
 ```
 

@@ -10,7 +10,20 @@ description: |-
 
 Configuration of an existing physical DSM Ethernet interface. Import is mandatory; hardware, bonds, virtual switches, HA, NAT and IPv6 routing/tunnels are not created or reconfigured. DHCP/automatic addresses are observed unless a static policy is explicitly declared. MAC identity is bound at import. Read and destroy never change or disable an interface. Changes can interrupt the provider endpoint; keep an independent management path and apply separately from router/DNS changes.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_network_interface.lan
+  id = "eth0"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_network_interface" "lan" {
@@ -18,10 +31,6 @@ resource "synology_network_interface" "lan" {
   ipv4_dhcp = true
   ipv6_type = "auto"
   mtu       = 1500
-}
-import {
-  to = synology_network_interface.lan
-  id = "eth0"
 }
 ```
 

@@ -9,7 +9,9 @@ description: |-
 
 Manage file shares, local accounts, permissions, and supported Synology DSM services over verified HTTPS.
 
-Import existing objects before managing them. Check [verified DSM versions and operations](https://github.com/elephant-evergreen/terraform-provider-synology/blob/main/docs/compatibility.md) before adopting a NAS. Live writes remain experimental.
+Start with the [read-only NAS connection check](https://github.com/elephant-evergreen/terraform-provider-synology#check-the-nas-connection). Check [verified DSM versions and operations](https://github.com/elephant-evergreen/terraform-provider-synology/blob/main/docs/compatibility.md) before adopting a NAS. Live writes remain experimental.
+
+To adopt an existing share, user, or service, open its resource page and follow **Adopt existing settings** before making changes.
 
 Before upgrading, read the [release notes for your target version](https://github.com/elephant-evergreen/terraform-provider-synology/releases).
 

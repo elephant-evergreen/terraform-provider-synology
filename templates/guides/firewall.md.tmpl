@@ -6,16 +6,36 @@ description: "Adopt selected-profile firewall policy and handle interrupted acti
 
 # Firewall adoption and recovery
 
-Import `synology_firewall` with ID `firewall`. Pin the observed enabled setting, profile name, port-check policy and complete adapter map. Review an import-only plan with zero changes before applying. Do not copy the example policy over an existing profile. Profile creation, rename and deletion remain outside this singleton. Destroy only releases management.
+## Adopt the current firewall
 
-Rule list order is priority. Each rule has a typed action, protocol, source and port selector; no raw API or JSON configuration is accepted. Omission preserves the current policy. Responses with unknown rule fields fail instead of silently dropping them. Profile storage and activation are separate: the provider verifies complete stored readback, then starts activation and polls its acknowledged task. A successful save alone is never treated as activation. Read and import never activate a profile or stop a task.
+1. Define an empty `synology_firewall` resource block to keep the policy DSM reports.
+2. Add the resource’s import block with ID `firewall`.
+3. Run `terraform plan`. Apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
 
-Before an enabled-policy change, declare the administrator source CIDRs actually seen by DSM, including NAT/VPN translation, in `management_networks`. Every declared network needs an explicit global allow for the observed DSM HTTPS port before any matching deny or uncertain selector. The guard conservatively refuses GeoIP, service-name, source-port or partial-range selectors when it cannot prove that allowance. It does not broaden the policy automatically. DSM port checking must remain enabled. Use a direct certificate-valid DSM endpoint whose port matches DSM's native HTTPS port; matching numbers do not establish the absence of an intermediary. These checks do not verify the asserted source networks or replace an independent recovery path.
+Import reads the profile without saving it, activating it, or stopping a task. Destroy releases Terraform management and leaves the policy installed.
 
-The resource reads stored profiles, selected profile, enabled state and port-check policy. DSM's demonstrated API does not expose a comparable kernel-rule digest. Unapplied out-of-band edits and direct kernel changes cannot be fully drift-detected. Provider-initiated activation is confirmed only through the reported task result and configuration readback. No atomic rollback or automatic recovery from lockout is promised.
+## Change the selected profile
 
-A failed multi-step change retains its target and acknowledged task ID in Terraform private state, which is configuration metadata requiring protected state storage. Refresh only polls an acknowledged activation and reads its target. Storage success followed by failed activation preparation remains uncertain and cannot clear the guard merely because stored fields match. An unacknowledged write requires explicit reconciliation: back up state, inspect DSM profiles, running tasks and effective access through an independent path, restore access if needed, then use a removed block with `destroy = false` and import the confirmed policy. Do not delete profiles to repair Terraform state.
+1. Verify an independent management path before editing rules. Use a direct certificate-valid DSM endpoint on DSM's native HTTPS port. Verify the actual connection path as well as the port.
+2. When editing rules, start from the complete adapter policy DSM reports. For an enabled policy, keep DSM port checking enabled and set `management_networks` to the administrator source CIDRs DSM sees after NAT or VPN translation.
+3. For each management network, place an explicit global allow for the DSM HTTPS port before matching denies or uncertain selectors. The provider refuses early GeoIP, service-name, source-port or partial-range selectors when it cannot prove management access.
+4. Review the rules and their order in the plan.
+5. Apply the reviewed change.
+6. Verify DSM access from the intended networks.
 
-A process exit or lost Terraform RPC response can lose pending state before Terraform saves it. Exactly-once execution and durable operation journaling across that boundary are not provided. After any interrupted apply inspect DSM before planning another change. A fresh baseline cannot reconstruct expired task history.
+The resource owns the complete selected profile and can select an existing one. Use DSM to create, rename, or delete profiles. Rules are evaluated in order. Omitted policy preserves the current settings. A response containing unknown rule fields stops the operation. The provider confirms activation through the DSM task result and a readback of stored configuration. Kernel changes and unapplied edits can escape drift detection. Keep the recovery path available through the change.
+
+## Recover an interrupted apply
+
+Inspect DSM through the independent path before planning again. Refresh can poll an acknowledged activation using the task ID saved in Terraform private state. A saved profile by itself does not confirm activation. A process exit or lost RPC response can leave state without the task ID.
+
+If the write is unacknowledged or DSM shows a stored policy with activation still uncertain:
+
+1. Back up Terraform state and check the selected profile, running tasks and effective access in DSM.
+2. Restore access if needed. Confirm which policy is active before proceeding.
+3. Replace the resource and its import block with a `removed` block that sets `destroy = false`. Apply a plan containing only the management release.
+4. Replace the `removed` block with the resource and import block using the confirmed policy. Apply an import-only plan.
+
+Recovery requires inspecting DSM. Expired task history cannot be reconstructed, and DSM does not provide an atomic rollback for this workflow.
 
 The API contract follows the shipped DSM 7.1.1 UI and [Synology firewall documentation](https://kb.synology.com/en-global/DSM/help/DSM/AdminCenter/connection_security_firewall). Hardware mutation and lockout recovery remain unverified without a disposable DSM environment.

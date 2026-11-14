@@ -84,7 +84,7 @@ func serviceResources() []func() resource.Resource {
 			"accounts_enabled":             {"enable_rsync_account", types.BoolType, "Enable rsync-specific accounts. This does not create or rotate account credentials."},
 			"ssh_port":                     {"rsync_sshd_port", types.Int64Type, "Rsync SSH port, from 1 to 65535."},
 		}}),
-		service(serviceDefinition{name: "windows_discovery", api: "SYNO.Core.FileServ.ServiceDiscovery.WSTransfer", version: 1, description: "Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it; reference synology_smb.enabled to establish matching policy and ordering. Destroy leaves discovery unchanged.", fields: map[string]serviceField{
+		service(serviceDefinition{name: "windows_discovery", api: "SYNO.Core.FileServ.ServiceDiscovery.WSTransfer", version: 1, description: "Windows WS-Discovery policy for SMB discovery. Keep SMB enabled when advertising it. If Terraform manages the SMB service, reference its enabled attribute to order the changes. Destroy leaves discovery unchanged.", fields: map[string]serviceField{
 			"enabled": {"enable_wstransfer", types.BoolType, "Advertise the NAS through Windows WS-Discovery."},
 		}}),
 		service(serviceDefinition{name: "file_transfer_logging", api: "SYNO.Core.SyslogClient.FileTransfer", version: 1, description: "Per-protocol file-transfer logging policy. Log contents, retention and detailed operation filters remain outside this resource. Omitted flags preserve their current values; destroy leaves logging enabled or disabled as configured on DSM.", fields: map[string]serviceField{

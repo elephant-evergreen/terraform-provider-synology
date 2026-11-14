@@ -6,18 +6,23 @@ description: "Adopt DSM network settings without changing connectivity or creden
 
 # Network and proxy adoption
 
+## Adopt network or proxy settings
+
 Import `synology_network` with ID `network` and `synology_network_proxy` with ID `network_proxy`. Match the observed policy before applying. An adoption plan must contain imports and zero configuration changes. General network policy owns hostname, DNS and routing preference flags; interface addresses, DHCP leases and default routes are separate. Keep DHCP reservations in the router configuration. Do not apply DSM connectivity changes and router changes together; retain an independent management path and a certificate-valid endpoint.
 
 Omitted fields preserve existing policy. Changing only the hostname does not rewrite DNS. Changing the DNS policy retains omitted DNS fields from a fresh read. Time Machine owns the complete set of advertised shared-folder names, never their contents. Configure service and shared-folder references to establish Terraform ordering.
 
 Proxy passwords are write-only. Import with `password_version = 0` and omit `password_wo` to preserve existing credentials. To intentionally change one, increase the version and supply an ephemeral password. Enabling authentication or changing its username requires an explicit password generation. When different HTTPS proxy use is disabled, HTTP host and port also determine HTTPS settings; conflicting explicit HTTPS values are rejected.
 
+## Recover an interrupted proxy password change
+
 An acknowledged password generation is retained before readback. An unacknowledged secret write blocks Update and Destroy until explicit reconciliation. Back up state, inspect DSM, release management with a removed block using `destroy = false`, set the generation to zero and omit the write-only secret, then import the confirmed policy. Never reset NAS credentials to repair Terraform state. A lost Terraform RPC response can lose the operation baseline; inspect DSM before retrying an interrupted apply. Unreadable password drift cannot be detected. Private metadata and ordinary configuration still require protected state storage.
+
+## Check the automatic backup policy
 
 Automatic configuration backup is a read-only data source. Its setter can produce new recovery-key material; a complete key-delivery and recovery contract has not been established, so enable, rotation, account binding, backup execution and restore require a separate DSM recovery workflow. An enabled policy does not prove successful backup, and configuration backup does not back up shared-folder data.
 
-
-## Physical Ethernet interfaces
+## Adopt or change a physical Ethernet interface
 
 Discover existing physical `ethN` slots with `data.synology_network_interfaces` and import each `synology_network_interface` by name. The resource binds the observed MAC identity. Hardware replacement or MAC changes require explicit reconciliation; refresh never silently adopts them. Create cannot create hardware or discard an interrupted baseline. Destroy releases management without disabling the interface.
 

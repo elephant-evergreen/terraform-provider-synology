@@ -10,7 +10,20 @@ description: |-
 
 SNMP service configuration. Import adopts current settings without writing. Secrets are write-only, require import and change only through Update when their version increases; external secret changes cannot be drift-detected. Destroy never changes DSM. Applied secret-generation baselines are protected; release them explicitly with a removed block using destroy = false. Protocol settings are available only while the corresponding service is active.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_snmp.main
+  id = "snmp"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_snmp" "main" {
@@ -18,11 +31,6 @@ resource "synology_snmp" "main" {
   v1_v2_enabled   = false
   v3_enabled      = false
   privacy_enabled = false
-}
-
-import {
-  to = synology_snmp.main
-  id = "snmp"
 }
 ```
 

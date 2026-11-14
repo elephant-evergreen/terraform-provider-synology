@@ -10,15 +10,24 @@ description: |-
 
 Outbound DSM HTTP/HTTPS proxy policy. The password is write-only and changes only with an increased version after import. Read, import and destroy never change the proxy. Existing credentials are retained when omitted; unreadable password drift cannot be detected.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_network_proxy.nas
+  id = "network_proxy"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_network_proxy" "nas" {
   enabled = false
-}
-import {
-  to = synology_network_proxy.nas
-  id = "network_proxy"
 }
 ```
 

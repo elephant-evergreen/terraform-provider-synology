@@ -7,13 +7,19 @@ description: |-
 
 # User-home adoption and interrupted operations
 
-The DSM user-home service already exists. Import `synology_user_home` with ID `user_home`; an HCL import block supports adoption and an intentional update in one plan. A migration of a running NAS must first contain only the import, with zero configuration changes. Create refuses writes so replacement cannot discard the baseline of an earlier background operation.
+## Adopt existing user homes
 
-Declare the observed local, domain and LDAP enabled flags. Omitted fields preserve their current DSM values. Domain and LDAP homes require local homes; disabling local homes must not implicitly disable dependent services. DSM feasibility restrictions and warnings must be resolved before applying. Personal Photo and remote home dependencies are checked before writing.
+1. Match the local, domain and LDAP enabled flags to the current DSM settings. Omitted fields preserve their current values.
+2. Add an import block for `synology_user_home` with ID `user_home`.
+3. Plan and apply the import separately from configuration changes. Create refuses writes so a replacement cannot discard an earlier operation baseline.
+
+## Change the home-service policy
+
+Domain and LDAP homes require local homes; disabling local homes must not implicitly disable dependent services. DSM feasibility restrictions and warnings must be resolved before applying. Personal Photo and remote home dependencies are checked before writing.
 
 `location` selects a local volume such as `/volume1` when initially enabling homes. An established location cannot be changed by this resource because that would move user files. Perform any data migration through a separately reviewed procedure, then import the resulting configuration. Recycle-bin and encryption settings are observed only. An existing protected `synology_shared_folder` resource owns homes-share settings; encryption-key operations and file migration are outside this resource.
 
-## Interrupted operations
+## Recover an interrupted operation
 
 Before a change, the provider discovers existing user-home background tasks and refuses to start another while one is running. It retains the target policy before the write, and checkpoints a returned task identity before waiting. An acknowledged operation resumes through read-only polling and readback. The pending goal and task identity use [provider private state](https://developer.hashicorp.com/terraform/plugin/framework/resources/private-state); they remain part of Terraform state and are not secret storage.
 

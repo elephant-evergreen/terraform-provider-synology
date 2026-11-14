@@ -4,8 +4,3 @@ resource "synology_snmp" "main" {
   v3_enabled      = false
   privacy_enabled = false
 }
-
-import {
-  to = synology_snmp.main
-  id = "snmp"
-}

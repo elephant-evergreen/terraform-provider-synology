@@ -10,7 +10,20 @@ description: |-
 
 Package Center update-channel, notification and automatic-update policy. Package installations and running state have separate owners. Import preserves current settings; destroy releases management without disabling updates. Trust is observed only because this DSM UI does not establish a corresponding setter. Automatic updates can change software and application data later; an enabled policy does not wait for those future operations.
 
-## Example Usage
+## Adopt existing settings
+
+1. Add the import block below with your resource address and the ID of the existing DSM object.
+2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
+3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+
+```terraform
+import {
+  to = synology_package_center.nas
+  id = "package_center"
+}
+```
+
+## Example configuration
 
 ```terraform
 resource "synology_package_center" "nas" {
@@ -18,10 +31,6 @@ resource "synology_package_center" "nas" {
   beta_channel        = false
   dsm_notifications   = true
   email_notifications = false
-}
-import {
-  to = synology_package_center.nas
-  id = "package_center"
 }
 ```
 

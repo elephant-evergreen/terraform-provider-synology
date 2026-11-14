@@ -7,7 +7,13 @@ description: |-
 
 # SNMP adoption and secrets
 
-Import `synology_snmp` with ID `snmp` before changing an existing NAS. Import and refresh do not write configuration. Start with the observed service flags and omit all secret arguments and versions. An adoption plan must contain the import and no configuration changes.
+## Adopt existing settings
+
+1. Match the observed service flags, omitting all secret arguments and versions.
+2. Add an import block for `synology_snmp` with ID `snmp`.
+3. Apply an import-only plan to preserve the service settings and secrets.
+
+## Change settings or rotate a secret
 
 The community and v3 authentication/privacy passwords are write-only. Supply the corresponding `_wo` input and increase its `_version` to change it. Keep the last applied version in configuration. Import initializes each version to zero; these counters do not detect external secret changes. Even though DSM can return the community, the provider uses it only in memory to preserve it during unrelated updates and never saves it in state. System name, location, contact and v3 username are configuration metadata and do enter state.
 
@@ -17,9 +23,11 @@ Configure `auth_protocol` only with an enabled v3 service, and `privacy_protocol
 
 An acknowledged Update checkpoints secret versions before readback. A later readback error does not cause that acknowledged rotation to be resent on the next apply. A transport failure during a write cannot establish whether DSM accepted it: inspect DSM and refresh before retrying; do not blindly replay an old saved plan. No cross-client transaction or automatic rollback is promised. Use one configuration writer.
 
-Secret changes require Import and run only through Update. Add an HCL import block with ID `snmp`; Terraform can import and apply an intentional secret update in one reviewed plan. Create cannot establish the existing generation baseline, so it refuses nonzero secret versions before any SNMP write. This also prevents rotation replay during replacements in either destroy-before-create or create-before-destroy order.
+Rotate secrets in an update after establishing the import baseline. Terraform also accepts an intentional update paired with an import block in one reviewed plan. Create cannot establish the existing generation baseline, so it refuses nonzero secret versions before any SNMP write. This also prevents rotation replay during replacements in either destroy-before-create or create-before-destroy order.
 
-An unacknowledged secret Update keeps a local computed `reconciliation_required` guard. This includes malformed negative responses with missing error codes: a failure response is not evidence that no setting changed. The guard blocks retries and replacement, and a successful read does not remove it. Recover using standard Terraform ownership operations:
+## Recover an unacknowledged write
+
+An unacknowledged secret update keeps a local computed `reconciliation_required` guard. This includes malformed negative responses with missing error codes: a failure response is not evidence that no setting changed. The guard blocks retries and replacement, and a successful read does not remove it. Recover using standard Terraform ownership operations:
 
 1. Back up state and inspect the actual DSM configuration and secret outcome. Do not accept replacement or delete NAS data.
 2. Temporarily replace the SNMP resource and its import block with a `removed` block for its address and `lifecycle { destroy = false }`. Review a plan containing only the forget operation and apply it.

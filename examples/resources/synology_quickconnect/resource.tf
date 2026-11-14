@@ -8,7 +8,3 @@ resource "synology_quickconnect" "nas" {
     file_sharing = false
   }
 }
-import {
-  to = synology_quickconnect.nas
-  id = "quickconnect"
-}

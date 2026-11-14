@@ -4,7 +4,3 @@ resource "synology_package_center" "nas" {
   dsm_notifications   = true
   email_notifications = false
 }
-import {
-  to = synology_package_center.nas
-  id = "package_center"
-}
