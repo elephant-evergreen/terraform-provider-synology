@@ -1,6 +1,6 @@
 Third-party software included in release executables. Source versions and license texts follow.
 
-Go go1.27.3 standard library and runtime; https://go.dev/LICENSE
+Go go1.27.4 standard library and runtime; https://go.dev/LICENSE
 
 Copyright 2009 The Go Authors.
 
