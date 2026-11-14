@@ -8,20 +8,24 @@ description: "Adopt selected-profile firewall policy and handle interrupted acti
 
 ## Adopt the current firewall
 
-1. Define an empty `synology_firewall` resource block to keep the policy DSM reports.
-2. Add the resource’s import block with ID `firewall`.
-3. Run `terraform plan`. Apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+Follow [Adopt existing settings](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs/resources/firewall#adopt-existing-settings) for the copyable configuration and import-only plan.
 
 Import reads the profile without saving it, activating it, or stopping a task. Destroy releases Terraform management and leaves the policy installed.
 
 ## Change the selected profile
 
 1. Verify an independent management path before editing rules. Use a direct certificate-valid DSM endpoint on DSM's native HTTPS port. Verify the actual connection path as well as the port.
-2. When editing rules, start from the complete adapter policy DSM reports. For an enabled policy, keep DSM port checking enabled and set `management_networks` to the administrator source CIDRs DSM sees after NAT or VPN translation.
+2. After adoption, run `terraform state show synology_firewall.nas` to read the profile and `adapters` policy. Use your actual resource address if it differs. For an enabled policy, keep DSM port checking enabled and set `management_networks` to the administrator source CIDRs DSM sees after NAT or VPN translation.
 3. For each management network, place an explicit global allow for the DSM HTTPS port before matching denies or uncertain selectors. The provider refuses early GeoIP, service-name, source-port or partial-range selectors when it cannot prove management access.
-4. Review the rules and their order in the plan.
-5. Apply the reviewed change.
+4. Edit the adopted resource using your profile and complete adapter policy, including the rules you want to keep.
+5. Save the plan with `terraform plan -out=firewall.tfplan`. Apply it with `terraform apply firewall.tfplan` only if it contains the intended policy and rule order.
 6. Verify DSM access from the intended networks.
+
+### Management rule example
+
+Use this example to see the shape of one management rule. Keep your existing policy and use your actual profile, DSM port, and management networks.
+
+{{ tffile "examples/guides/firewall/policy.tf" }}
 
 The resource owns the complete selected profile and can select an existing one. Use DSM to create, rename, or delete profiles. Rules are evaluated in order. Omitted policy preserves the current settings. A response containing unknown rule fields stops the operation. The provider confirms activation through the DSM task result and a readback of stored configuration. Kernel changes and unapplied edits can escape drift detection. Keep the recovery path available through the change.
 

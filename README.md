@@ -4,36 +4,7 @@ Manage file shares, local accounts, permissions, and supported Synology DSM serv
 
 ## Check the NAS connection
 
-Set `SYNOLOGY_ENDPOINT` to the DSM HTTPS origin and supply `SYNOLOGY_USERNAME` and `SYNOLOGY_PASSWORD` through your usual secret management. If DSM uses a private certificate authority, set `SYNOLOGY_CA_FILE` to its PEM bundle.
-
-Save this as `main.tf` in an empty directory. The example reads physical network interfaces without changing DSM settings.
-
-```hcl
-terraform {
-  required_version = ">= 1.17.1"
-
-  required_providers {
-    synology = {
-      source  = "elephant-evergreen/synology"
-      version = "~> 0.4.0"
-    }
-  }
-}
-
-provider "synology" {}
-
-data "synology_network_interfaces" "nas" {}
-
-output "interfaces" {
-  value = sort(keys(data.synology_network_interfaces.nas.interfaces))
-}
-```
-
-1. Run `terraform init` to install the provider.
-2. Run `terraform plan` to read the NAS.
-3. Look for your Ethernet interface names, such as `eth0`, in the planned `interfaces` output.
-
-Keep `.terraform.lock.hcl` in version control. To pick up a compatible patch, read its release notes, run `terraform init -upgrade`, and review the lockfile and plan.
+Follow [Check the NAS connection in Terraform Registry](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs#check-the-nas-connection) to connect over verified HTTPS and read the Ethernet interfaces.
 
 ## Adopt an existing NAS
 

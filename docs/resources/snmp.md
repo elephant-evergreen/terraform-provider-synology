@@ -12,9 +12,7 @@ SNMP service configuration. Import adopts current settings without writing. Secr
 
 ## Adopt existing settings
 
-1. Add the import block below with your resource address and the ID of the existing DSM object.
-2. Set your arguments to the values DSM currently reports. The sample configuration shows the shape and uses example values.
-3. Run `terraform plan`. For one import, apply only when it reports `1 to import, 0 to add, 0 to change, 0 to destroy`.
+Use an initialized project from [Check the NAS connection](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs#check-the-nas-connection). Add this import block with your resource address and the ID of the existing DSM object.
 
 ```terraform
 import {
@@ -22,6 +20,10 @@ import {
   id = "snmp"
 }
 ```
+
+1. Add the resource block with the values DSM currently reports. Use the sample configuration as a starting point.
+2. Run `terraform plan -out=adopt.tfplan`. For one import, expect `1 to import, 0 to add, 0 to change, 0 to destroy`. If the plan proposes changes, match the differing arguments to DSM and save a new plan.
+3. Run `terraform apply adopt.tfplan` once the saved plan contains only the import. The next `terraform plan` should report `No changes`.
 
 ## Example configuration
 
