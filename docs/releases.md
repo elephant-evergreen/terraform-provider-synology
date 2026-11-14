@@ -31,7 +31,7 @@ A compatible fix can be brief. For example, lead with `## Upgrade notes` and “
 
 ## Publish and verify
 
-1. Review the release notes with the changes they describe. For an incompatible release, exercise the upgrade from the previous public version with representative existing HCL and state. Confirm that the documented procedure preserves existing objects and settings except for explicitly documented changes. Check that the plan contains only the intended actions before applying it in a test environment.
+1. Review the release notes with the changes they describe. For an incompatible release, check that the [upgrade verification](../CONTRIBUTING.md) covers the versions and migrations in the release notes. Reuse those results for the same candidate and repeat any checks affected by later changes.
 2. After the PR is merged and its main-branch Check workflow passes, tag that exact commit. From a checkout with access to the repository, set `reviewed_commit` to that SHA and `release_tag` to the version matching the notes. Then run:
 
    ```sh
