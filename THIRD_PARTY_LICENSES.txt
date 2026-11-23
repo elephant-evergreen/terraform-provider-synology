@@ -3381,9 +3381,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ========================================================================
-golang.org/x/net v0.61.0
+golang.org/x/net v0.63.0
 BSD-3-Clause
-https://cs.opensource.google/go/x/net/+/v0.61.0:LICENSE
+https://cs.opensource.google/go/x/net/+/v0.63.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -3449,9 +3449,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ========================================================================
-golang.org/x/sys/unix v0.49.0
+golang.org/x/sys/unix v0.50.0
 BSD-3-Clause
-https://cs.opensource.google/go/x/sys/+/v0.49.0:LICENSE
+https://cs.opensource.google/go/x/sys/+/v0.50.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -3483,9 +3483,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ========================================================================
-golang.org/x/text v0.43.0
+golang.org/x/text v0.44.0
 BSD-3-Clause
-https://cs.opensource.google/go/x/text/+/v0.43.0:LICENSE
+https://cs.opensource.google/go/x/text/+/v0.44.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
