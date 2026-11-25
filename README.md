@@ -8,7 +8,7 @@ Follow [Check the NAS connection in Terraform Registry](https://registry.terrafo
 
 ## Adopt an existing NAS
 
-Start with the **Adopt existing settings** section on the Registry page for your share, user, group, or service. For one object, plan for `1 to import, 0 to add, 0 to change, 0 to destroy` before applying. After the import, run `terraform plan` again and expect `No changes` if your configuration matches DSM. Import leaves DSM configuration and user files intact. Passwords and transient sessions stay out of state. Shared folders, users, and groups are protected against deletion by default. Destroying a service or share-permission resource releases Terraform management and leaves the DSM settings in place.
+Start with the **Adopt existing settings** section on the Registry page for your share, user, group, or service: add the import block, match the configuration to the current DSM values, and apply a plan that contains only the import. Import leaves DSM configuration and user files intact. Passwords and transient sessions stay out of state. Shared folders, users, and groups are protected against deletion by default. Destroying a service or share-permission resource releases Terraform management and leaves the DSM settings in place.
 
 Use the guide for the operation you want to perform:
 

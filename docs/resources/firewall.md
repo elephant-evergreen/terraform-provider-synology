@@ -23,8 +23,8 @@ import {
 }
 ```
 
-1. Run `terraform plan -out=adopt.tfplan`. Expect `1 to import, 0 to add, 0 to change, 0 to destroy`. If the plan shows a remote change, stop and check that the resource block is empty and the import ID is `firewall`.
-2. Run `terraform apply adopt.tfplan` once the saved plan contains only the import. The next `terraform plan` should report `No changes`.
+1. Run `terraform plan -out=adopt.tfplan` and keep a plan that contains only the import. If the plan shows a remote change, stop and check that the resource block is empty and the import ID is `firewall`.
+2. Apply the saved plan.
 
 ## Change the firewall policy
 
