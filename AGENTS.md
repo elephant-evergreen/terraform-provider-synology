@@ -13,4 +13,5 @@
 - Never commit credentials, private identifiers, DSM exports, state, plan files, or personal data. Do not add code comments unless requested.
 - Run mise run check before publication. State exact DSM compatibility evidence and remaining limits.
 - Follow the [compatibility checks](CONTRIBUTING.md) before designing or merging changes that affect existing installations.
+- Follow the [public information rules](CONTRIBUTING.md#public-information) for public content.
 - Preserve MPL-2.0 and third-party notices. AI-assisted commits require a reason and Co-Authored-By trailer.
