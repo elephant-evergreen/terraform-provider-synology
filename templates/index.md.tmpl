@@ -35,6 +35,6 @@ If certificate verification fails, check that the endpoint matches the certifica
 
 Open the resource page for your share, user, or service and follow **Adopt existing settings**. For firewall policy, start with the [firewall resource](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs/resources/firewall#adopt-existing-settings).
 
-Keep `.terraform.lock.hcl` in version control. Before upgrading, read the [release notes for your target version](https://github.com/elephant-evergreen/terraform-provider-synology/releases), then run `terraform init -upgrade` and review the lock file and plan.
+Before upgrading, read the [release notes for your target version](https://github.com/elephant-evergreen/terraform-provider-synology/releases), then review the plan for changes to existing objects.
 
 {{ .SchemaMarkdown | trimspace }}
