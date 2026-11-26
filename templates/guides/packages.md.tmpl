@@ -26,4 +26,4 @@ Uninstall is protected by default. Disable protection in a separate reviewed app
 
 ## Verification scope
 
-Contracts are traced through the shipped DSM 7.1.1 Package Center UI (`webman/modules/PkgManApp/PkgManApp.js`, SHA-256 `f539b43ff69c9c956b7af1ec6024e7d9e4206b46281a557c8d390f5e4bda0102`). Installed reads and policy observations are verified separately from fixture lifecycle evidence. The live online-catalogue read timed out in the inspected environment; no hardware installation or deletion was attempted.
+Contracts are traced through the Package Center UI shipped with DSM 7.1.1. Installed reads and policy observations are verified separately from fixture lifecycle evidence. No hardware installation or deletion has been attempted.
