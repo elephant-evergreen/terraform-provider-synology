@@ -40,3 +40,9 @@ The SNMP extension verifies typed readback on the same live DSM with SNMP disabl
 The user-home service has read-only live evidence for a disabled service and empty task discovery. Actual task progress, mutations and interrupted-operation recovery remain fixture evidence. The provider requires import before writes, refuses existing home-folder relocation, preserves dependent policies, and never cancels tasks during refresh. See the [user-home guide](guides/user_homes.md).
 
 The expanded terminal read includes port, console-access policy and SSH algorithm selections; rsync includes its SSH port and existing custom-configuration switch. These fields have read-only hardware evidence and synthetic lifecycle coverage, not hardware-write evidence. Automatic configuration-backup mutations are deliberately not exposed because its setter can return new recovery-key material; the response can contain `pwd`, which is ignored and never enters state. DDNS record discovery uses `SYNO.Core.DDNS.Record.list`; `SYNO.Core.DDNS.list` is not a valid substitute on the observed DSM.
+
+## Device identity binding
+
+Every managed resource records the NAS serial number in its private state on create, read, update, and import. Read, update, and delete refuse to proceed when the stored serial differs from the configured endpoint, which prevents Terraform state from being applied to a different device with the same object name.
+
+The serial is read from `SYNO.Core.System.info`. When an observed DSM version does not advertise that API, the provider logs a warning and skips the binding for that run; the safety guarantee then depends on the object-level UUID, UID, and GID checks instead. DSM 7.1.1 advertises the API, and the serial is available without the per-interface `type=network` selector.

@@ -40,11 +40,19 @@ func (f *interfaceFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case "SYNO.API.Auth":
 		data = map[string]any{"sid": "fixture-session"}
 	case "SYNO.Core.System":
-		if method != "info" || r.Form.Get("type") != "network" {
+		if method != "info" {
 			w.WriteHeader(400)
 			return
 		}
-		data = map[string]any{"nif": []map[string]any{{"id": "eth0", "mac": f.mac}}}
+		switch r.Form.Get("type") {
+		case "network":
+			data = map[string]any{"nif": []map[string]any{{"id": "eth0", "mac": f.mac}}}
+		case "":
+			data = map[string]any{"serial": "fixture-serial"}
+		default:
+			w.WriteHeader(400)
+			return
+		}
 	case ethernetAPI:
 		switch method {
 		case "list":

@@ -52,6 +52,7 @@ type fixture struct {
 	passwordWrites         int
 	writes                 int
 	reads                  int
+	serial                 string
 }
 
 func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -100,13 +101,19 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	switch api {
 	case "SYNO.API.Info":
 		catalog := map[string]any{}
-		for _, api := range []string{"SYNO.Core.Share", "SYNO.Core.User", "SYNO.Core.Group", "SYNO.Core.Group.Member", "SYNO.Core.User.Group", "SYNO.Core.Share.Permission"} {
+		for _, api := range []string{"SYNO.Core.Share", "SYNO.Core.User", "SYNO.Core.Group", "SYNO.Core.Group.Member", "SYNO.Core.User.Group", "SYNO.Core.Share.Permission", "SYNO.Core.System"} {
 			catalog[api] = map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 1}
 		}
 		catalog["SYNO.API.Auth"] = map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 7}
 		data = catalog
 	case "SYNO.API.Auth":
 		data = map[string]any{"sid": "fixture-session", "synotoken": "fixture-token"}
+	case "SYNO.Core.System":
+		serial := f.serial
+		if serial == "" {
+			serial = "fixture-serial"
+		}
+		data = map[string]any{"serial": serial, "model": "fixture", "firmware_ver": "fixture"}
 	case "SYNO.Core.Share":
 		if r.Form.Get("_sid") != "fixture-session" {
 			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": map[string]any{"code": 105}})
@@ -428,6 +435,8 @@ resource "synology_shared_folder" "test" {
 				f.mu.Unlock()
 			}},
 			{Config: config("fixture", "/volume1", "updated", false), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
+			{Config: config("fixture", "/volume1", "updated", false), PreConfig: func() { f.mu.Lock(); f.serial = "other-serial"; f.mu.Unlock() }, PlanOnly: true, ExpectError: regexp.MustCompile(`another NAS`)},
+			{Config: config("fixture", "/volume1", "updated", false), PreConfig: func() { f.mu.Lock(); f.serial = "fixture-serial"; f.mu.Unlock() }, PlanOnly: true},
 		},
 	})
 }

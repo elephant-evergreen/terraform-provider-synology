@@ -70,9 +70,12 @@ func (f *homeFixture) serve(w http.ResponseWriter, r *http.Request) {
 			"SYNO.API.Auth":              map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 7},
 			homeAPI:                      map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 1},
 			"SYNO.Entry.Request.Polling": map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 1},
+			"SYNO.Core.System":           map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 1},
 		}
 	case "SYNO.API.Auth":
 		data = map[string]any{"sid": "fixture-session"}
+	case "SYNO.Core.System":
+		data = map[string]any{"serial": "fixture-serial"}
 	case "SYNO.Entry.Request.Polling":
 		if r.Form.Get("method") != "list" || r.Form.Get("task_id_prefix") != "userhome" {
 			w.WriteHeader(400)

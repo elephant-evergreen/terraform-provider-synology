@@ -27,6 +27,15 @@ type APIError struct {
 	Code   int
 }
 
+type UnsupportedAPIError struct {
+	API     string
+	Version int
+}
+
+func (e *UnsupportedAPIError) Error() string {
+	return fmt.Sprintf("DSM does not advertise required %s version %d", e.API, e.Version)
+}
+
 func (e *APIError) Error() string {
 	return fmt.Sprintf("DSM rejected %s.%s (code %d)", e.API, e.Method, e.Code)
 }
@@ -49,12 +58,33 @@ type Client struct {
 	mu       sync.Mutex
 	mutation sync.RWMutex
 	packages singleflight.Group
+	serialMu sync.Mutex
+	serial   string
 }
 
 func (*Client) String() string   { return "DSM client (credentials redacted)" }
 func (*Client) GoString() string { return "DSM client (credentials redacted)" }
 
 func (c *Client) IsSessionUser(name string) bool { return name == c.username }
+
+func (c *Client) Serial(ctx context.Context) (string, error) {
+	c.serialMu.Lock()
+	defer c.serialMu.Unlock()
+	if c.serial != "" {
+		return c.serial, nil
+	}
+	var info struct {
+		Serial string `json:"serial"`
+	}
+	if err := c.Call(ctx, "SYNO.Core.System", 1, "info", nil, &info); err != nil {
+		return "", err
+	}
+	if info.Serial == "" {
+		return "", errors.New("DSM returned no device serial")
+	}
+	c.serial = info.Serial
+	return c.serial, nil
+}
 
 func New(endpoint, username, password, otp, caFile string) (*Client, error) {
 	u, err := url.Parse(endpoint)
@@ -119,7 +149,7 @@ func (c *Client) Connect(ctx context.Context) error {
 func (c *Client) Call(ctx context.Context, api string, version int, method string, args url.Values, result any) error {
 	cap, ok := c.apis[api]
 	if !ok || version < cap.Min || version > cap.Max {
-		return fmt.Errorf("DSM does not advertise required %s version %d", api, version)
+		return &UnsupportedAPIError{API: api, Version: version}
 	}
 	return c.request(ctx, cap.Path, api, version, method, args, result, true)
 }
