@@ -50,6 +50,7 @@ type fixture struct {
 	failUserReadAfterSet   bool
 	userUpdateAcknowledged bool
 	passwordWrites         int
+	loseUserPasswordAck    bool
 	writes                 int
 	reads                  int
 	serial                 string
@@ -217,8 +218,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			f.users[name] = map[string]any{"name": name, "uid": 1027, "description": r.Form.Get("description"), "email": r.Form.Get("email"), "expired": r.Form.Get("expired"), "groups": []string{"users"}, "unmanaged_future_setting": "preserved"}
 		case "set":
 			f.userUpdateAcknowledged = true
+			lost := false
 			if r.Form.Get("password") != "" {
 				f.passwordWrites++
+				lost = f.loseUserPasswordAck
 			}
 			f.writes++
 			u := f.users[r.Form.Get("name")]
@@ -226,6 +229,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 				if r.Form.Has(key) {
 					u[key] = r.Form.Get(key)
 				}
+			}
+			if lost {
+				w.WriteHeader(502)
+				return
 			}
 		case "delete":
 			f.writes++

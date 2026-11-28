@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"slices"
+	"strconv"
 
 	"github.com/elephant-evergreen/terraform-provider-synology/internal/dsm"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -211,6 +212,9 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	m.read(u)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
+
+const pendingPasswordKey = "pending_password_generation"
+
 func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	resp.Diagnostics.Append(guardUncertainCreation(ctx, req.Private)...)
 	if resp.Diagnostics.HasError() {
@@ -226,6 +230,20 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if config.Groups.IsUnknown() {
 		resp.Diagnostics.AddError("Unknown group membership", "Resolve groups before updating the account.")
 		return
+	}
+	pendingRaw, d := req.Private.GetKey(ctx, pendingPasswordKey)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	pendingGeneration := int64(0)
+	if pendingRaw != nil {
+		parsed, parseErr := strconv.ParseInt(string(pendingRaw), 10, 64)
+		if parseErr != nil {
+			resp.Diagnostics.AddError("Cannot read the pending password generation", "The private state is malformed. Refresh or re-import the account before changing its password.")
+			return
+		}
+		pendingGeneration = parsed
 	}
 	current, err := r.client.User(ctx, state.Name.ValueString())
 	if err != nil {
@@ -244,9 +262,16 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 	}
+	if password != "" && pendingGeneration > 0 && plan.PasswordVersion.ValueInt64() == pendingGeneration {
+		resp.Diagnostics.AddError("User password write requires reconciliation", "The previous password write was not acknowledged. The password may already be set. Rotate again with a higher password_version, or re-import the account before retrying.")
+		return
+	}
 	groupsChanged := !config.Groups.IsNull() && !config.Groups.IsUnknown() && !plan.Groups.Equal(state.Groups)
 	if password != "" || !plan.Description.Equal(state.Description) || !plan.Email.Equal(state.Email) || !plan.Expiration.Equal(state.Expiration) {
 		if err := r.write(ctx, "set", plan, password, groupsChanged, state.UID.ValueInt64()); err != nil {
+			if password != "" && !rejectedCreation(err) {
+				resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPasswordKey, []byte(strconv.FormatInt(plan.PasswordVersion.ValueInt64(), 10)))...)
+			}
 			if errors.Is(err, dsm.ErrUserIdentityChanged) {
 				resp.Diagnostics.AddError("User identity changed", "Refusing to update an unverified or replacement account.")
 			} else {
@@ -254,6 +279,7 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			}
 			return
 		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPasswordKey, nil)...)
 		state.Description = plan.Description
 		state.Email = plan.Email
 		state.Expiration = plan.Expiration
@@ -319,4 +345,5 @@ func (*userResource) ImportState(ctx context.Context, req resource.ImportStateRe
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("deletion_protection"), true)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("password_version"), int64(0))...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPasswordKey, nil)...)
 }
