@@ -48,8 +48,8 @@ resource "synology_shared_folder" "archive" {
 
 ### Required
 
-- `name` (String) DSM shared-folder name and import identifier. Changing it requires replacement; protection rejects deletion.
-- `volume` (String) Existing volume path, for example /volume1. The provider does not create or reformat storage.
+- `name` (String) DSM shared-folder name and import identifier. Renaming is refused at plan time because replacement would destroy the stored files.
+- `volume` (String) Existing volume path, for example /volume1. Moving is refused at plan time because replacement would destroy the stored files. The provider does not create or reformat storage.
 
 ### Optional
 

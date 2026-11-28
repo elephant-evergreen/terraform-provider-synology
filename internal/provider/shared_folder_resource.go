@@ -19,6 +19,7 @@ import (
 var _ resource.ResourceWithImportState = (*sharedFolderResource)(nil)
 var _ resource.ResourceWithConfigure = (*sharedFolderResource)(nil)
 var _ resource.ResourceWithValidateConfig = (*sharedFolderResource)(nil)
+var _ resource.ResourceWithModifyPlan = (*sharedFolderResource)(nil)
 
 type sharedFolderResource struct{ client *dsm.Client }
 type shareModel struct {
@@ -39,8 +40,8 @@ func (*sharedFolderResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 func (*sharedFolderResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{MarkdownDescription: "Own shared-folder metadata while preserving file contents and unmanaged permissions. Import by name. Renaming or moving a shared folder is deliberately unsupported; these changes must never silently replace stored data.", Attributes: map[string]schema.Attribute{
-		"name":                    schema.StringAttribute{Required: true, MarkdownDescription: "DSM shared-folder name and import identifier. Changing it requires replacement; protection rejects deletion.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"volume":                  schema.StringAttribute{Required: true, MarkdownDescription: "Existing volume path, for example /volume1. The provider does not create or reformat storage.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"name":                    schema.StringAttribute{Required: true, MarkdownDescription: "DSM shared-folder name and import identifier. Renaming is refused at plan time because replacement would destroy the stored files.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"volume":                  schema.StringAttribute{Required: true, MarkdownDescription: "Existing volume path, for example /volume1. Moving is refused at plan time because replacement would destroy the stored files. The provider does not create or reformat storage.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"description":             schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), MarkdownDescription: "Shared-folder description. An empty string clears it."},
 		"uuid":                    schema.StringAttribute{Computed: true, MarkdownDescription: "DSM shared-folder UUID, when exposed by the device.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"hidden":                  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), MarkdownDescription: "Hide the share from network browsing."},
@@ -72,6 +73,23 @@ func (*sharedFolderResource) ValidateConfig(ctx context.Context, req resource.Va
 	}
 	if !m.Volume.IsUnknown() && !m.Volume.IsNull() && (!strings.HasPrefix(m.Volume.ValueString(), "/volume") || strings.Contains(m.Volume.ValueString()[1:], "/")) {
 		resp.Diagnostics.AddAttributeError(path.Root("volume"), "Invalid volume path", "Use an existing DSM volume path such as /volume1.")
+	}
+}
+func (*sharedFolderResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var state, plan shareModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !plan.Name.Equal(state.Name) {
+		resp.Diagnostics.AddAttributeError(path.Root("name"), "Shared-folder rename is refused", "Changing the name would replace the shared folder and destroy its files. Create a new folder and migrate explicitly, or stop managing the existing folder with a removed block using destroy = false.")
+	}
+	if !plan.Volume.Equal(state.Volume) {
+		resp.Diagnostics.AddAttributeError(path.Root("volume"), "Shared-folder move is refused", "Changing the volume would replace the shared folder and destroy its files. Migrate the data explicitly instead of replacing the folder.")
 	}
 }
 func (m *shareModel) object() dsm.Share {
