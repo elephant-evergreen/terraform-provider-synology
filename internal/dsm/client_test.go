@@ -145,3 +145,77 @@ func TestNullPermissionFlagsAreRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestReadReauthenticatesExpiredSession(t *testing.T) {
+	var logins, reads atomic.Int32
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Auth.login":
+			logins.Add(1)
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"fresh-session","synotoken":"fresh-token"}}`)
+		case "SYNO.Core.Share.list":
+			if reads.Add(1) == 1 {
+				fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+				return
+			}
+			if r.Form.Get("_sid") != "fresh-session" || r.Header.Get("X-SYNO-TOKEN") != "fresh-token" {
+				t.Error("the retried read did not use the refreshed session")
+			}
+			fmt.Fprint(w, `{"success":true,"data":{"shares":[],"total":0}}`)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	})
+	client.apis = map[string]Capability{
+		"SYNO.API.Auth":   {Path: "entry.cgi", Min: 1, Max: 6},
+		"SYNO.Core.Share": {Path: "entry.cgi", Min: 1, Max: 1},
+	}
+	client.sid, client.token = "expired-session", "expired-token"
+	var out struct {
+		Shares []json.RawMessage `json:"shares"`
+		Total  *int              `json:"total"`
+	}
+	if err := client.Call(t.Context(), "SYNO.Core.Share", 1, "list", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if logins.Load() != 1 || reads.Load() != 2 {
+		t.Fatalf("logins=%d reads=%d, want 1 and 2", logins.Load(), reads.Load())
+	}
+}
+
+func TestWriteDoesNotRetryExpiredSession(t *testing.T) {
+	var logins, writes atomic.Int32
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Auth.login":
+			logins.Add(1)
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"fresh-session"}}`)
+		case "SYNO.Core.Share.set":
+			writes.Add(1)
+			fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	})
+	client.apis = map[string]Capability{
+		"SYNO.API.Auth":   {Path: "entry.cgi", Min: 1, Max: 6},
+		"SYNO.Core.Share": {Path: "entry.cgi", Min: 1, Max: 1},
+	}
+	client.sid = "expired-session"
+	err := client.Call(t.Context(), "SYNO.Core.Share", 1, "set", nil, nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != 119 {
+		t.Fatalf("error = %v, want APIError 119", err)
+	}
+	if logins.Load() != 0 || writes.Load() != 1 {
+		t.Fatalf("logins=%d writes=%d, want 0 and 1", logins.Load(), writes.Load())
+	}
+}
