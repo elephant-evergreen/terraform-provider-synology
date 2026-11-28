@@ -47,19 +47,21 @@ type Capability struct {
 }
 
 type Client struct {
-	endpoint string
-	http     *http.Client
-	username string
-	password string
-	otp      string
-	sid      string
-	token    string
-	apis     map[string]Capability
-	mu       sync.Mutex
-	mutation sync.RWMutex
-	packages singleflight.Group
-	serialMu sync.Mutex
-	serial   string
+	endpoint  string
+	http      *http.Client
+	username  string
+	password  string
+	otp       string
+	sid       string
+	token     string
+	apis      map[string]Capability
+	mu        sync.Mutex
+	mutation  sync.RWMutex
+	packages  singleflight.Group
+	serialMu  sync.Mutex
+	serial    string
+	sessionMu sync.RWMutex
+	auth      singleflight.Group
 }
 
 func (*Client) String() string   { return "DSM client (credentials redacted)" }
@@ -124,7 +126,11 @@ func (c *Client) Connect(ctx context.Context) error {
 		return errors.New("DSM returned an empty API capability catalog")
 	}
 	c.apis = info
-	cap, ok := info["SYNO.API.Auth"]
+	return c.login(ctx)
+}
+
+func (c *Client) login(ctx context.Context) error {
+	cap, ok := c.apis["SYNO.API.Auth"]
 	if !ok || cap.Min > 6 || cap.Max < 6 {
 		return errors.New("DSM does not advertise the required authentication API version 6")
 	}
@@ -142,14 +148,46 @@ func (c *Client) Connect(ctx context.Context) error {
 	if auth.SID == "" {
 		return errors.New("DSM authentication returned no session identifier")
 	}
+	c.sessionMu.Lock()
 	c.sid, c.token = auth.SID, auth.Token
+	c.sessionMu.Unlock()
 	return nil
+}
+
+func (c *Client) reauthenticate(ctx context.Context) error {
+	_, err, _ := c.auth.Do("login", func() (any, error) {
+		return nil, c.login(ctx)
+	})
+	return err
+}
+
+func readMethod(method string) bool {
+	switch method {
+	case "get", "list", "status", "info", "query":
+		return true
+	}
+	return false
+}
+
+func sessionExpired(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == 106 || apiErr.Code == 107 || apiErr.Code == 119
 }
 
 func (c *Client) Call(ctx context.Context, api string, version int, method string, args url.Values, result any) error {
 	cap, ok := c.apis[api]
 	if !ok || version < cap.Min || version > cap.Max {
 		return &UnsupportedAPIError{API: api, Version: version}
+	}
+	err := c.request(ctx, cap.Path, api, version, method, args, result, true)
+	if err == nil || !readMethod(method) || !sessionExpired(err) {
+		return err
+	}
+	if reauthErr := c.reauthenticate(ctx); reauthErr != nil {
+		return err
 	}
 	return c.request(ctx, cap.Path, api, version, method, args, result, true)
 }
@@ -166,16 +204,20 @@ func (c *Client) request(ctx context.Context, path, api string, version int, met
 	for k, v := range args {
 		form[k] = append([]string(nil), v...)
 	}
+	sid, token := "", ""
 	if authenticated {
-		form.Set("_sid", c.sid)
+		c.sessionMu.RLock()
+		sid, token = c.sid, c.token
+		c.sessionMu.RUnlock()
+		form.Set("_sid", sid)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"/webapi/"+path, strings.NewReader(form.Encode()))
 	if err != nil {
 		return errors.New("cannot construct DSM request")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if authenticated && c.token != "" {
-		req.Header.Set("X-SYNO-TOKEN", c.token)
+	if token != "" {
+		req.Header.Set("X-SYNO-TOKEN", token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
