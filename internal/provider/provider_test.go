@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -379,7 +380,7 @@ func TestAccSharedFolderLifecycle(t *testing.T) {
 	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := func(desc string, protect bool) string {
+	config := func(name, volume, desc string, protect bool) string {
 		return fmt.Sprintf(`
 provider "synology" {
   endpoint = %q
@@ -388,13 +389,13 @@ provider "synology" {
   password = "fixture-password"
 }
 resource "synology_shared_folder" "test" {
-  name = "fixture"
-  volume = "/volume1"
+  name = %q
+  volume = %q
   description = %q
   hide_unauthorized_files = true
   deletion_protection = %t
 }
-`, server.URL, ca, desc, protect)
+`, server.URL, ca, name, volume, desc, protect)
 	}
 	var beforeImport int
 	resource.Test(t, resource.TestCase{
@@ -408,7 +409,7 @@ resource "synology_shared_folder" "test" {
 			return nil
 		},
 		Steps: []resource.TestStep{
-			{Config: config("initial", true), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "initial"), resource.TestCheckResourceAttr("synology_shared_folder.test", "recycle_bin", "true"))},
+			{Config: config("fixture", "/volume1", "initial", true), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "initial"), resource.TestCheckResourceAttr("synology_shared_folder.test", "recycle_bin", "true"))},
 			{ResourceName: "synology_shared_folder.test", ImportState: true, ImportStateId: "fixture", ImportStateVerify: true, ImportStateVerifyIdentifierAttribute: "name", PreConfig: func() { f.mu.Lock(); beforeImport = f.writes; f.mu.Unlock() }, ImportStateCheck: func(_ []*terraform.InstanceState) error {
 				f.mu.Lock()
 				defer f.mu.Unlock()
@@ -417,14 +418,16 @@ resource "synology_shared_folder" "test" {
 				}
 				return nil
 			}},
-			{Config: config("updated", true), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
-			{Config: config("updated", true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() {
+			{Config: config("fixture", "/volume1", "updated", true), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
+			{Config: config("fixture-renamed", "/volume1", "updated", true), PlanOnly: true, ExpectError: regexp.MustCompile(`Shared-folder rename is refused`)},
+			{Config: config("fixture", "/volume2", "updated", true), PlanOnly: true, ExpectError: regexp.MustCompile(`Shared-folder move is refused`)},
+			{Config: config("fixture", "/volume1", "updated", true), PlanOnly: true, ExpectNonEmptyPlan: true, PreConfig: func() {
 				f.mu.Lock()
 				f.shares["fixture"]["desc"] = "external change"
 				f.shares["fixture"]["hide_unreadable"] = false
 				f.mu.Unlock()
 			}},
-			{Config: config("updated", false), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
+			{Config: config("fixture", "/volume1", "updated", false), Check: resource.TestCheckResourceAttr("synology_shared_folder.test", "description", "updated")},
 		},
 	})
 }
