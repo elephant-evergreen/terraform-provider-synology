@@ -8,6 +8,11 @@ import (
 	"net/url"
 )
 
+type PartialAccessPolicyError struct{ Err error }
+
+func (e *PartialAccessPolicyError) Error() string { return e.Err.Error() }
+func (e *PartialAccessPolicyError) Unwrap() error { return e.Err }
+
 type AccessPolicy struct {
 	ShareUUID string
 	Users     map[string]string
@@ -167,15 +172,15 @@ func (c *Client) WriteAccessPolicy(ctx context.Context, share string, expected A
 		}
 		sc.items = items
 	}
-	write := func(sc *scope, target map[string]string) error {
+	write := func(sc *scope, target map[string]string) (bool, error) {
 		if maps.Equal(target, sc.applied) {
-			return nil
+			return false, nil
 		}
 		payload := make([]map[string]any, 0, len(sc.items))
 		for _, item := range sc.items {
 			entry, err := decodePermission(item)
 			if err != nil {
-				return err
+				return false, err
 			}
 			access := target[entry.Name]
 			row := map[string]any{"name": entry.Name, "is_readonly": access == "read_only", "is_writable": access == "read_write", "is_deny": access == "deny"}
@@ -185,30 +190,41 @@ func (c *Client) WriteAccessPolicy(ctx context.Context, share string, expected A
 			payload = append(payload, row)
 		}
 		if err := c.Call(ctx, "SYNO.Core.Share.Permission", 1, "set", url.Values{"name": {share}, "user_group_type": {sc.kind}, "permissions": {JSON(payload)}}, nil); err != nil {
-			return err
+			return false, err
 		}
 		sc.applied = maps.Clone(target)
-		return nil
+		return true, nil
+	}
+	wrote := false
+	fail := func(err error) error {
+		if wrote {
+			return &PartialAccessPolicyError{Err: err}
+		}
+		return err
 	}
 	for _, sc := range scopes {
-		if err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, true)); err != nil {
-			return err
+		changed, err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, true))
+		if err != nil {
+			return fail(err)
 		}
+		wrote = wrote || changed
 	}
 	for _, sc := range scopes {
-		if err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, false)); err != nil {
-			return err
+		changed, err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, false))
+		if err != nil {
+			return fail(err)
 		}
+		wrote = wrote || changed
 	}
 	actual, err := c.AccessPolicy(ctx, share)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if current.ShareUUID != actual.ShareUUID || !maps.Equal(current.UserIDs, actual.UserIDs) || !maps.Equal(current.GroupIDs, actual.GroupIDs) {
-		return errors.New("DSM identities changed during permission update")
+		return fail(errors.New("DSM identities changed during permission update"))
 	}
 	if !maps.Equal(actual.Users, users) || !maps.Equal(actual.Groups, groups) {
-		return errors.New("DSM did not confirm the complete requested permission policy")
+		return fail(errors.New("DSM did not confirm the complete requested permission policy"))
 	}
 	return nil
 }

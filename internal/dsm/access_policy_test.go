@@ -2,6 +2,7 @@ package dsm
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -100,5 +101,72 @@ func TestAccessTargetAddsDenyBeforeGrant(t *testing.T) {
 	permissive := accessTarget(restrictive, current, desired, false)
 	if permissive["denied"] != "deny" || permissive["granted"] != "read_write" {
 		t.Fatalf("permissive phase = %v", permissive)
+	}
+}
+
+func TestWriteAccessPolicyReportsPartialFailure(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		api, method := r.Form.Get("api"), r.Form.Get("method")
+		var data string
+		switch api + "." + method {
+		case "SYNO.Core.Share.list":
+			data = `{"shares":[{"name":"share"}],"total":1}`
+		case "SYNO.Core.Share.get":
+			data = `{"name":"share","uuid":"share-uuid","desc":"","vol_path":"/volume1","hidden":false,"hide_unreadable":false,"enable_recycle_bin":false,"recycle_bin_admin_only":false}`
+		case "SYNO.Core.User.list":
+			data = `{"users":[{"name":"alice","uid":1001,"description":"","email":"","expired":"normal"}],"total":1}`
+		case "SYNO.Core.Group.list":
+			data = `{"groups":[{"name":"administrators"},{"name":"readers"}],"total":2}`
+		case "SYNO.Core.Group.get":
+			var names []string
+			if json.Unmarshal([]byte(r.Form.Get("name")), &names) != nil || len(names) != 1 {
+				t.Error("expected one group name")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			gid := 101
+			if names[0] == "readers" {
+				gid = 102
+			}
+			data = fmt.Sprintf(`{"groups":[{"name":%q,"gid":%d,"description":""}]}`, names[0], gid)
+		case "SYNO.Core.Share.Permission.list":
+			if r.Form.Get("user_group_type") == "local_user" {
+				data = `{"items":[{"name":"alice","is_readonly":false,"is_writable":false,"is_deny":false}],"total":1}`
+			} else {
+				data = `{"items":[{"name":"administrators","is_readonly":false,"is_writable":true,"is_deny":false},{"name":"readers","is_readonly":false,"is_writable":false,"is_deny":false}],"total":2}`
+			}
+		case "SYNO.Core.Share.Permission.set":
+			if r.Form.Get("user_group_type") == "local_group" {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			data = `{}`
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"success":true,"data":%s}`, data)
+	})
+	client.apis = map[string]Capability{}
+	for _, api := range []string{"SYNO.Core.Share", "SYNO.Core.User", "SYNO.Core.Group", "SYNO.Core.Share.Permission"} {
+		client.apis[api] = Capability{Path: "entry.cgi", Min: 1, Max: 1}
+	}
+	expected := AccessPolicy{
+		ShareUUID: "share-uuid",
+		Users:     map[string]string{},
+		Groups:    map[string]string{"administrators": "read_write"},
+		UserIDs:   map[string]int64{"alice": 1001},
+		GroupIDs:  map[string]int64{"administrators": 101, "readers": 102},
+	}
+	err := client.WriteAccessPolicy(t.Context(), "share", expected, map[string]string{"alice": "read_write"}, map[string]string{"administrators": "read_write", "readers": "read_only"})
+	var partial *PartialAccessPolicyError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v, want PartialAccessPolicyError", err)
 	}
 }
