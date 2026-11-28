@@ -330,6 +330,16 @@ func (c *Client) UserGroups(ctx context.Context, name string, uid int64) ([]stri
 func (c *Client) SetUserGroups(ctx context.Context, name string, desired []string) error {
 	c.mutation.Lock()
 	defer c.mutation.Unlock()
+	return c.setUserGroups(ctx, name, 0, desired)
+}
+
+func (c *Client) SetUserGroupsVerified(ctx context.Context, name string, expectedUID int64, desired []string) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	return c.setUserGroups(ctx, name, expectedUID, desired)
+}
+
+func (c *Client) setUserGroups(ctx context.Context, name string, expectedUID int64, desired []string) error {
 	users, err := c.Users(ctx)
 	if err != nil {
 		return err
@@ -343,6 +353,9 @@ func (c *Client) SetUserGroups(ctx context.Context, name string, desired []strin
 	}
 	if uid <= 0 {
 		return ErrNotFound
+	}
+	if expectedUID > 0 && uid != expectedUID {
+		return ErrUserIdentityChanged
 	}
 	current, err := c.UserGroups(ctx, name, uid)
 	if err != nil {
@@ -416,6 +429,74 @@ func (c *Client) WriteGroup(ctx context.Context, method string, g Group) error {
 		return errors.New("unsupported group mutation")
 	}
 	return c.Mutate(ctx, "SYNO.Core.Group", 1, method, url.Values{"name": {g.Name}, "description": {g.Description}})
+}
+
+var ErrUserIdentityChanged = errors.New("user identity changed before or during the mutation")
+
+func (c *Client) MutateUser(ctx context.Context, method string, args url.Values, expectedUID int64) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	if expectedUID > 0 {
+		name := args.Get("name")
+		users, err := c.Users(ctx)
+		if err != nil {
+			return err
+		}
+		uid := int64(0)
+		for _, u := range users {
+			if u.Name == name {
+				uid = u.UID
+				break
+			}
+		}
+		if uid <= 0 {
+			return ErrNotFound
+		}
+		if uid != expectedUID {
+			return ErrUserIdentityChanged
+		}
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.User", 1, method, args, &reply); err != nil {
+		return err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return fmt.Errorf("DSM SYNO.Core.User.%s did not acknowledge a successful synchronous mutation; inspect and reconcile before retrying", method)
+	}
+	return nil
+}
+
+func (c *Client) DeleteUserVerified(ctx context.Context, name string, expectedUID int64) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	users, err := c.Users(ctx)
+	if err != nil {
+		return err
+	}
+	uid := int64(0)
+	for _, u := range users {
+		if u.Name == name {
+			uid = u.UID
+			break
+		}
+	}
+	if uid == 0 {
+		return nil
+	}
+	if expectedUID <= 0 || uid != expectedUID {
+		return ErrUserIdentityChanged
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.User", 1, "delete", url.Values{"name": {name}}, &reply); err != nil {
+		return err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return errors.New("DSM did not acknowledge the user deletion; inspect and reconcile before retrying")
+	}
+	if _, err := c.User(ctx, name); !errors.Is(err, ErrNotFound) {
+		return errors.New("DSM has not confirmed that the account is absent")
+	}
+	return nil
 }
 
 var ErrGroupIdentityChanged = errors.New("group identity changed before or during the mutation")
