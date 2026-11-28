@@ -2,9 +2,13 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/elephant-evergreen/terraform-provider-synology/internal/dsm"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -21,6 +25,60 @@ type permissionsModel struct {
 	ShareUUID types.String `tfsdk:"share_uuid"`
 	UserIDs   types.Map    `tfsdk:"user_ids"`
 	GroupIDs  types.Map    `tfsdk:"group_ids"`
+}
+
+const pendingPermissionKey = "pending_permission_policy"
+
+type pendingPolicy struct {
+	Share  string            `json:"share"`
+	Users  map[string]string `json:"users"`
+	Groups map[string]string `json:"groups"`
+}
+
+func pendingPolicyValue(ctx context.Context, plan permissionsModel) ([]byte, error) {
+	users, groups, err := plan.maps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(pendingPolicy{Share: plan.Share.ValueString(), Users: users, Groups: groups})
+}
+
+func checkPendingPolicy(ctx context.Context, plan permissionsModel, private privateState, diags *diag.Diagnostics) {
+	raw, d := private.GetKey(ctx, pendingPermissionKey)
+	diags.Append(d...)
+	if diags.HasError() || raw == nil {
+		return
+	}
+	var stored pendingPolicy
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		diags.AddError("Cannot read the pending permission policy", "The private state is malformed. Re-import the shared folder before changing permissions.")
+		return
+	}
+	encoded, err := pendingPolicyValue(ctx, plan)
+	if err != nil {
+		diags.AddError("Cannot encode the requested permission policy", err.Error())
+		return
+	}
+	var want pendingPolicy
+	if err := json.Unmarshal(encoded, &want); err != nil {
+		diags.AddError("Cannot encode the requested permission policy", err.Error())
+		return
+	}
+	if stored.Share != want.Share || !maps.Equal(stored.Users, want.Users) || !maps.Equal(stored.Groups, want.Groups) {
+		diags.AddError("A previous permission change was only partially applied", "Re-apply the same policy or re-import the shared folder before changing it again.")
+	}
+}
+
+func recordPartialPolicy(ctx context.Context, err error, plan permissionsModel, private privateState, diags *diag.Diagnostics) {
+	var partial *dsm.PartialAccessPolicyError
+	if !errors.As(err, &partial) {
+		return
+	}
+	encoded, encodeErr := pendingPolicyValue(ctx, plan)
+	if encodeErr != nil {
+		return
+	}
+	diags.Append(private.SetKey(ctx, pendingPermissionKey, encoded)...)
 }
 
 func NewSharePermissionsResource() resource.Resource { return &sharePermissionsResource{} }
@@ -220,9 +278,11 @@ func (r *sharePermissionsResource) Create(ctx context.Context, req resource.Crea
 	resp.Diagnostics.Append(resp.State.Set(ctx, &prior)...)
 	actual, err := r.apply(ctx, plan, current)
 	if err != nil {
+		recordPartialPolicy(ctx, err, plan, resp.Private, &resp.Diagnostics)
 		resp.Diagnostics.AddError("Cannot apply shared-folder policy", err.Error())
 		return
 	}
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPermissionKey, nil)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &actual)...)
 }
 func (r *sharePermissionsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -250,17 +310,24 @@ func (r *sharePermissionsResource) Update(ctx context.Context, req resource.Upda
 		resp.Diagnostics.AddError("Shared-folder policy changed after planning", "Re-run terraform plan before applying. The provider will not overwrite an unreviewed permission change.")
 		return
 	}
+	checkPendingPolicy(ctx, plan, req.Private, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	plan.UserIDs = state.UserIDs
 	plan.GroupIDs = state.GroupIDs
 	actual, err := r.apply(ctx, plan, current)
 	if err != nil {
+		recordPartialPolicy(ctx, err, plan, resp.Private, &resp.Diagnostics)
 		resp.Diagnostics.AddError("Cannot update shared-folder policy", err.Error())
 		return
 	}
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPermissionKey, nil)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &actual)...)
 }
 func (*sharePermissionsResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
 }
 func (*sharePermissionsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("share"), req, resp)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, pendingPermissionKey, nil)...)
 }
