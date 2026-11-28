@@ -219,3 +219,22 @@ func TestWriteDoesNotRetryExpiredSession(t *testing.T) {
 		t.Fatalf("logins=%d writes=%d, want 0 and 1", logins.Load(), writes.Load())
 	}
 }
+
+func TestLoginReportsBlockedSource(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Form.Get("api") == "SYNO.API.Auth" && r.Form.Get("method") == "login" {
+			fmt.Fprint(w, `{"success":false,"error":{"code":499}}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	client.apis = map[string]Capability{"SYNO.API.Auth": {Path: "entry.cgi", Min: 1, Max: 6}}
+	err := client.login(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "499") || !strings.Contains(err.Error(), "session limit") {
+		t.Fatalf("error = %v, want a blocked-source diagnostic", err)
+	}
+}
