@@ -62,6 +62,8 @@ type Client struct {
 	serial    string
 	sessionMu sync.RWMutex
 	auth      singleflight.Group
+	userList  singleflight.Group
+	groupList singleflight.Group
 }
 
 func (*Client) String() string   { return "DSM client (credentials redacted)" }
