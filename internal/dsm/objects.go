@@ -418,6 +418,61 @@ func (c *Client) WriteGroup(ctx context.Context, method string, g Group) error {
 	return c.Mutate(ctx, "SYNO.Core.Group", 1, method, url.Values{"name": {g.Name}, "description": {g.Description}})
 }
 
+var ErrGroupIdentityChanged = errors.New("group identity changed before or during the mutation")
+
+func (c *Client) UpdateGroupVerified(ctx context.Context, name string, expectedGID int64, g Group) (Group, error) {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	current, err := c.Group(ctx, name)
+	if err != nil {
+		return Group{}, err
+	}
+	if expectedGID <= 0 || current.GID != expectedGID {
+		return Group{}, ErrGroupIdentityChanged
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.Group", 1, "set", url.Values{"name": {g.Name}, "description": {g.Description}}, &reply); err != nil {
+		return Group{}, err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return Group{}, errors.New("DSM did not acknowledge the group update; inspect and reconcile before retrying")
+	}
+	updated, err := c.Group(ctx, name)
+	if err != nil {
+		return Group{}, err
+	}
+	if updated.GID != expectedGID {
+		return Group{}, ErrGroupIdentityChanged
+	}
+	return updated, nil
+}
+
+func (c *Client) DeleteGroupVerified(ctx context.Context, name string, expectedGID int64) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	current, err := c.Group(ctx, name)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if expectedGID <= 0 || current.GID != expectedGID {
+		return ErrGroupIdentityChanged
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.Group", 1, "delete", url.Values{"name": {JSON([]string{name})}}, &reply); err != nil {
+		return err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return errors.New("DSM did not acknowledge the group deletion; inspect and reconcile before retrying")
+	}
+	if _, err := c.Group(ctx, name); !errors.Is(err, ErrNotFound) {
+		return errors.New("DSM has not confirmed that the group is absent")
+	}
+	return nil
+}
+
 func (c *Client) DeletePrincipal(ctx context.Context, kind, name string) error {
 	api := "SYNO.Core.User"
 	value := name
