@@ -79,7 +79,7 @@ func (m *userModel) read(u dsm.User) {
 		m.DeletionProtection = types.BoolValue(true)
 	}
 }
-func (r *userResource) write(ctx context.Context, method string, m userModel, password string, writeGroups bool) error {
+func (r *userResource) write(ctx context.Context, method string, m userModel, password string, writeGroups bool, expectedUID int64) error {
 	var groups []string
 	if !m.Groups.IsUnknown() && !m.Groups.IsNull() {
 		if diags := m.Groups.ElementsAs(ctx, &groups, false); diags.HasError() {
@@ -96,7 +96,7 @@ func (r *userResource) write(ctx context.Context, method string, m userModel, pa
 	if password != "" {
 		args.Set("password", password)
 	}
-	if err := r.client.Mutate(ctx, "SYNO.Core.User", 1, method, args); err != nil {
+	if err := r.client.MutateUser(ctx, method, args, expectedUID); err != nil {
 		return err
 	}
 	return nil
@@ -137,7 +137,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Cannot check user identity", err.Error())
 		return
 	}
-	err = r.write(ctx, "create", plan, config.Password.ValueString(), false)
+	err = r.write(ctx, "create", plan, config.Password.ValueString(), false, 0)
 	if err != nil {
 		if !rejectedCreation(err) {
 			plan.UID = types.Int64Null()
@@ -246,8 +246,12 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 	groupsChanged := !config.Groups.IsNull() && !config.Groups.IsUnknown() && !plan.Groups.Equal(state.Groups)
 	if password != "" || !plan.Description.Equal(state.Description) || !plan.Email.Equal(state.Email) || !plan.Expiration.Equal(state.Expiration) {
-		if err := r.write(ctx, "set", plan, password, groupsChanged); err != nil {
-			resp.Diagnostics.AddError("Cannot update user", err.Error())
+		if err := r.write(ctx, "set", plan, password, groupsChanged, state.UID.ValueInt64()); err != nil {
+			if errors.Is(err, dsm.ErrUserIdentityChanged) {
+				resp.Diagnostics.AddError("User identity changed", "Refusing to update an unverified or replacement account.")
+			} else {
+				resp.Diagnostics.AddError("Cannot update user", err.Error())
+			}
 			return
 		}
 		state.Description = plan.Description
@@ -266,8 +270,12 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		if err := r.client.SetUserGroups(ctx, plan.Name.ValueString(), groups); err != nil {
-			resp.Diagnostics.AddError("Cannot update user membership", err.Error())
+		if err := r.client.SetUserGroupsVerified(ctx, plan.Name.ValueString(), state.UID.ValueInt64(), groups); err != nil {
+			if errors.Is(err, dsm.ErrUserIdentityChanged) {
+				resp.Diagnostics.AddError("User identity changed", "Refusing to change membership of a replacement account.")
+			} else {
+				resp.Diagnostics.AddError("Cannot update user membership", err.Error())
+			}
 			return
 		}
 	}
@@ -299,24 +307,12 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		resp.Diagnostics.AddError("User deletion is protected", "Built-in and authenticated accounts cannot be deleted. Custom-account deletion requires a separate apply disabling deletion_protection. To keep the account, use a removed block with destroy=false.")
 		return
 	}
-	u, err := r.client.User(ctx, name)
-	if errors.Is(err, dsm.ErrNotFound) {
-		return
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot verify user identity", err.Error())
-		return
-	}
-	if m.UID.IsNull() || m.UID.ValueInt64() <= 0 || u.UID != m.UID.ValueInt64() {
-		resp.Diagnostics.AddError("User identity changed", "Refusing to delete a different account with the same name.")
-		return
-	}
-	if err := r.client.DeletePrincipal(ctx, "user", name); err != nil {
-		resp.Diagnostics.AddError("Cannot delete user", err.Error())
-		return
-	}
-	if _, err := r.client.User(ctx, name); !errors.Is(err, dsm.ErrNotFound) {
-		resp.Diagnostics.AddError("User deletion is unconfirmed", "Refresh DSM before retrying the deletion.")
+	if err := r.client.DeleteUserVerified(ctx, name, m.UID.ValueInt64()); err != nil {
+		if errors.Is(err, dsm.ErrUserIdentityChanged) {
+			resp.Diagnostics.AddError("User identity changed", "Refusing to delete a different account with the same name.")
+		} else {
+			resp.Diagnostics.AddError("Cannot delete user", err.Error())
+		}
 	}
 }
 func (*userResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
