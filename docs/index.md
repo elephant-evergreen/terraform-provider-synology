@@ -50,6 +50,10 @@ output "interfaces" {
 
 If certificate verification fails, check that the endpoint matches the certificate and that its issuing CA is trusted. If sign-in fails, check the account and refresh the one-time code if required.
 
+## DSM sessions
+
+Each Terraform run opens one DSM session named `Terraform` and does not sign it out when the run ends; the provider has no shutdown callback. Repeated short runs within the DSM idle timeout can reach the account's session limit, and DSM then rejects the next sign-in with code 499. Wait for the idle timeout or sign out the sessions in DSM before retrying. A blocked source (407) or the session limit (499) is reported with its code and recovery step.
+
 ## Adopt existing settings
 
 Open the resource page for your share, user, or service and follow **Adopt existing settings**. For firewall policy, start with the [firewall resource](https://registry.terraform.io/providers/elephant-evergreen/synology/latest/docs/resources/firewall#adopt-existing-settings).
