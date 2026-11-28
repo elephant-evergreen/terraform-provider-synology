@@ -135,6 +135,20 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !plan.Description.Equal(state.Description) {
+		g, err := r.client.UpdateGroupVerified(ctx, state.Name.ValueString(), state.GID.ValueInt64(), dsm.Group{Name: plan.Name.ValueString(), Description: plan.Description.ValueString()})
+		if err != nil {
+			if errors.Is(err, dsm.ErrGroupIdentityChanged) {
+				resp.Diagnostics.AddError("Group identity changed", "Refusing to update an unverified or replacement group.")
+			} else {
+				resp.Diagnostics.AddError("Cannot update group", err.Error())
+			}
+			return
+		}
+		plan.read(g)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
 	current, err := r.client.Group(ctx, state.Name.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot verify group identity", err.Error())
@@ -144,22 +158,7 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("Group identity changed", "Refusing to update an unverified or replacement group.")
 		return
 	}
-	if !plan.Description.Equal(state.Description) {
-		if err := r.client.WriteGroup(ctx, "set", dsm.Group{Name: plan.Name.ValueString(), Description: plan.Description.ValueString()}); err != nil {
-			resp.Diagnostics.AddError("Cannot update group", err.Error())
-			return
-		}
-	}
-	g, err := r.client.Group(ctx, plan.Name.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot verify group update", err.Error())
-		return
-	}
-	if g.GID != state.GID.ValueInt64() {
-		resp.Diagnostics.AddError("Group identity changed during update", "The provider will not adopt a replacement group.")
-		return
-	}
-	plan.read(g)
+	plan.read(current)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -177,24 +176,12 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		resp.Diagnostics.AddError("Group deletion is protected", "Built-in groups cannot be deleted. Disable deletion_protection in a separate apply for an intentional custom-group deletion, or stop management with a removed block and destroy=false.")
 		return
 	}
-	g, err := r.client.Group(ctx, name)
-	if errors.Is(err, dsm.ErrNotFound) {
-		return
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot verify group identity", err.Error())
-		return
-	}
-	if m.GID.IsNull() || m.GID.ValueInt64() <= 0 || g.GID != m.GID.ValueInt64() {
-		resp.Diagnostics.AddError("Group identity changed", "Refusing to delete a different group with the same name.")
-		return
-	}
-	if err := r.client.DeletePrincipal(ctx, "group", name); err != nil {
-		resp.Diagnostics.AddError("Cannot delete group", err.Error())
-		return
-	}
-	if _, err := r.client.Group(ctx, name); !errors.Is(err, dsm.ErrNotFound) {
-		resp.Diagnostics.AddError("Group deletion is unconfirmed", "Refresh DSM before retrying the deletion.")
+	if err := r.client.DeleteGroupVerified(ctx, name, m.GID.ValueInt64()); err != nil {
+		if errors.Is(err, dsm.ErrGroupIdentityChanged) {
+			resp.Diagnostics.AddError("Group identity changed", "Refusing to delete a different group with the same name.")
+		} else {
+			resp.Diagnostics.AddError("Cannot delete group", err.Error())
+		}
 	}
 }
 func (*groupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
