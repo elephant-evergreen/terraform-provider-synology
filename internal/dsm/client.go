@@ -143,6 +143,10 @@ func (c *Client) login(ctx context.Context) error {
 		args.Set("otp_code", c.otp)
 	}
 	if err := c.request(ctx, cap.Path, "SYNO.API.Auth", 6, "login", args, &auth, false); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && (apiErr.Code == 499 || apiErr.Code == 407) {
+			return fmt.Errorf("DSM rejected the login (%d): the source IP may be blocked or the account may have reached its session limit; unblock the IP or sign out stale sessions in DSM, then retry", apiErr.Code)
+		}
 		return err
 	}
 	if auth.SID == "" {
