@@ -123,8 +123,18 @@ func accessTarget(applied, current, desired map[string]string, restrictive bool)
 	if target == nil {
 		target = map[string]string{}
 	}
-	for name, want := range desired {
-		have := current[name]
+	names := map[string]struct{}{}
+	for name := range applied {
+		names[name] = struct{}{}
+	}
+	for name := range current {
+		names[name] = struct{}{}
+	}
+	for name := range desired {
+		names[name] = struct{}{}
+	}
+	for name := range names {
+		want, have := desired[name], current[name]
 		if restrictive && accessRank(want) < accessRank(have) {
 			target[name] = want
 		}
