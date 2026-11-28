@@ -203,6 +203,21 @@ func (r *sharedFolderResource) Update(ctx context.Context, req resource.UpdateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	visibilityChanged := !plan.HideUnauthorizedFiles.IsNull() && !plan.HideUnauthorizedFiles.IsUnknown() && !plan.HideUnauthorizedFiles.Equal(state.HideUnauthorizedFiles)
+	if visibilityChanged || !plan.Description.Equal(state.Description) || !plan.Hidden.Equal(state.Hidden) || !plan.RecycleBin.Equal(state.RecycleBin) || !plan.RecycleBinAdminOnly.Equal(state.RecycleBinAdminOnly) {
+		s, err := r.client.UpdateShareVerified(ctx, state.Name.ValueString(), state.UUID.ValueString(), plan.object())
+		if err != nil {
+			if errors.Is(err, dsm.ErrShareIdentityChanged) {
+				resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to update an unverified or replacement folder. Refresh and explicitly reconcile its identity.")
+			} else {
+				resp.Diagnostics.AddError("Cannot update shared folder", err.Error())
+			}
+			return
+		}
+		plan.read(s)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
 	current, err := r.client.Share(ctx, state.Name.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot verify shared-folder identity", err.Error())
@@ -212,23 +227,7 @@ func (r *sharedFolderResource) Update(ctx context.Context, req resource.UpdateRe
 		resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to update an unverified or replacement folder. Refresh and explicitly reconcile its identity.")
 		return
 	}
-	visibilityChanged := !plan.HideUnauthorizedFiles.IsNull() && !plan.HideUnauthorizedFiles.IsUnknown() && !plan.HideUnauthorizedFiles.Equal(state.HideUnauthorizedFiles)
-	if visibilityChanged || !plan.Description.Equal(state.Description) || !plan.Hidden.Equal(state.Hidden) || !plan.RecycleBin.Equal(state.RecycleBin) || !plan.RecycleBinAdminOnly.Equal(state.RecycleBinAdminOnly) {
-		if err := r.client.WriteShare(ctx, "set", plan.object()); err != nil {
-			resp.Diagnostics.AddError("Cannot update shared folder", err.Error())
-			return
-		}
-	}
-	s, err := r.client.Share(ctx, plan.Name.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot verify shared-folder update", err.Error())
-		return
-	}
-	if s.UUID != state.UUID.ValueString() {
-		resp.Diagnostics.AddError("Shared-folder identity changed during update", "The provider will not adopt the replacement folder. Inspect DSM before continuing.")
-		return
-	}
-	plan.read(s)
+	plan.read(current)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 func (r *sharedFolderResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -245,24 +244,12 @@ func (r *sharedFolderResource) Delete(ctx context.Context, req resource.DeleteRe
 		resp.Diagnostics.AddError("Shared-folder deletion is protected", "Deleting a shared folder destroys its files. To stop managing it, use a removed block with destroy=false. Intentional deletion requires disabling deletion_protection in a separate apply.")
 		return
 	}
-	current, err := r.client.Share(ctx, m.Name.ValueString())
-	if errors.Is(err, dsm.ErrNotFound) {
-		return
-	}
-	if err != nil {
-		resp.Diagnostics.AddError("Cannot verify shared-folder identity", err.Error())
-		return
-	}
-	if m.UUID.IsNull() || m.UUID.ValueString() == "" || current.UUID != m.UUID.ValueString() {
-		resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to delete an unverified or replacement folder.")
-		return
-	}
-	if err := r.client.DeleteShare(ctx, m.Name.ValueString()); err != nil {
-		resp.Diagnostics.AddError("Cannot delete shared folder", err.Error())
-		return
-	}
-	if _, err := r.client.Share(ctx, m.Name.ValueString()); !errors.Is(err, dsm.ErrNotFound) {
-		resp.Diagnostics.AddError("Shared-folder deletion is unconfirmed", "DSM has not confirmed that the folder is absent. Refresh before retrying.")
+	if err := r.client.DeleteShareVerified(ctx, m.Name.ValueString(), m.UUID.ValueString()); err != nil {
+		if errors.Is(err, dsm.ErrShareIdentityChanged) {
+			resp.Diagnostics.AddError("Shared-folder identity changed", "Refusing to delete an unverified or replacement folder.")
+		} else {
+			resp.Diagnostics.AddError("Cannot delete shared folder", err.Error())
+		}
 	}
 }
 func (*sharedFolderResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -108,10 +108,9 @@ func (c *Client) Share(ctx context.Context, name string) (Share, error) {
 	return Share{}, ErrNotFound
 }
 
-func (c *Client) WriteShare(ctx context.Context, method string, s Share) error {
-	if method != "create" && method != "set" {
-		return errors.New("unsupported shared-folder mutation")
-	}
+var ErrShareIdentityChanged = errors.New("shared-folder identity changed before or during the mutation")
+
+func shareMutationArgs(method string, s Share) url.Values {
 	info := map[string]any{"name": s.Name, "desc": s.Description, "hidden": s.Hidden, "enable_recycle_bin": s.RecycleBin, "recycle_bin_admin_only": s.RecycleBinAdminOnly}
 	if s.HideUnreadable != nil {
 		info["hide_unreadable"] = *s.HideUnreadable
@@ -119,7 +118,67 @@ func (c *Client) WriteShare(ctx context.Context, method string, s Share) error {
 	if method == "create" {
 		info["vol_path"] = s.Volume
 	}
-	return c.Mutate(ctx, "SYNO.Core.Share", 1, method, url.Values{"name": {s.Name}, "shareinfo": {JSON(info)}})
+	return url.Values{"name": {s.Name}, "shareinfo": {JSON(info)}}
+}
+
+func (c *Client) WriteShare(ctx context.Context, method string, s Share) error {
+	if method != "create" && method != "set" {
+		return errors.New("unsupported shared-folder mutation")
+	}
+	return c.Mutate(ctx, "SYNO.Core.Share", 1, method, shareMutationArgs(method, s))
+}
+
+func (c *Client) UpdateShareVerified(ctx context.Context, name, expectedUUID string, s Share) (Share, error) {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	current, err := c.Share(ctx, name)
+	if err != nil {
+		return Share{}, err
+	}
+	if expectedUUID == "" || current.UUID != expectedUUID {
+		return Share{}, ErrShareIdentityChanged
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.Share", 1, "set", shareMutationArgs("set", s), &reply); err != nil {
+		return Share{}, err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return Share{}, errors.New("DSM did not acknowledge the shared-folder update; inspect and reconcile before retrying")
+	}
+	updated, err := c.Share(ctx, name)
+	if err != nil {
+		return Share{}, err
+	}
+	if updated.UUID != expectedUUID {
+		return Share{}, ErrShareIdentityChanged
+	}
+	return updated, nil
+}
+
+func (c *Client) DeleteShareVerified(ctx context.Context, name, expectedUUID string) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	current, err := c.Share(ctx, name)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if expectedUUID == "" || current.UUID != expectedUUID {
+		return ErrShareIdentityChanged
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.Share", 1, "delete", url.Values{"name": {name}}, &reply); err != nil {
+		return err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return errors.New("DSM did not acknowledge the shared-folder deletion; inspect and reconcile before retrying")
+	}
+	if _, err := c.Share(ctx, name); !errors.Is(err, ErrNotFound) {
+		return errors.New("DSM has not confirmed that the shared folder is absent")
+	}
+	return nil
 }
 
 func (c *Client) DeleteShare(ctx context.Context, name string) error {
