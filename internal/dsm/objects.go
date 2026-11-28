@@ -211,33 +211,38 @@ func (c *Client) DeleteShare(ctx context.Context, name string) error {
 }
 
 func (c *Client) Users(ctx context.Context) ([]User, error) {
-	var data struct {
-		Users []json.RawMessage `json:"users"`
-		Total *int              `json:"total"`
-	}
-	err := c.Call(ctx, "SYNO.Core.User", 1, "list", url.Values{"offset": {"0"}, "limit": {"-1"}, "additional": {`["uid","description","email","expired"]`}}, &data)
+	value, err, _ := c.userList.Do("list", func() (any, error) {
+		var data struct {
+			Users []json.RawMessage `json:"users"`
+			Total *int              `json:"total"`
+		}
+		if err := c.Call(ctx, "SYNO.Core.User", 1, "list", url.Values{"offset": {"0"}, "limit": {"-1"}, "additional": {`["uid","description","email","expired"]`}}, &data); err != nil {
+			return nil, err
+		}
+		if data.Users == nil || data.Total == nil || *data.Total != len(data.Users) {
+			return nil, errors.New("DSM user listing is incomplete")
+		}
+		users := make([]User, 0, len(data.Users))
+		for _, raw := range data.Users {
+			var u User
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &u) != nil || json.Unmarshal(raw, &fields) != nil {
+				return nil, errors.New("DSM returned a malformed user")
+			}
+			if err := requireStrings(fields, "name", "description", "email", "expired"); err != nil {
+				return nil, err
+			}
+			if u.Name == "" || u.UID <= 0 || u.Expired == "" {
+				return nil, errors.New("DSM user listing is missing an identity or account state")
+			}
+			users = append(users, u)
+		}
+		return users, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if data.Users == nil || data.Total == nil || *data.Total != len(data.Users) {
-		return nil, errors.New("DSM user listing is incomplete")
-	}
-	users := make([]User, 0, len(data.Users))
-	for _, raw := range data.Users {
-		var u User
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(raw, &u) != nil || json.Unmarshal(raw, &fields) != nil {
-			return nil, errors.New("DSM returned a malformed user")
-		}
-		if err := requireStrings(fields, "name", "description", "email", "expired"); err != nil {
-			return nil, err
-		}
-		if u.Name == "" || u.UID <= 0 || u.Expired == "" {
-			return nil, errors.New("DSM user listing is missing an identity or account state")
-		}
-		users = append(users, u)
-	}
-	return users, nil
+	return value.([]User), nil
 }
 
 func (c *Client) User(ctx context.Context, name string) (User, error) {
@@ -259,23 +264,28 @@ func (c *Client) User(ctx context.Context, name string) (User, error) {
 }
 
 func (c *Client) Groups(ctx context.Context) ([]Group, error) {
-	var data struct {
-		Groups []Group `json:"groups"`
-		Total  *int    `json:"total"`
-	}
-	err := c.Call(ctx, "SYNO.Core.Group", 1, "list", url.Values{"offset": {"0"}, "limit": {"-1"}}, &data)
+	value, err, _ := c.groupList.Do("list", func() (any, error) {
+		var data struct {
+			Groups []Group `json:"groups"`
+			Total  *int    `json:"total"`
+		}
+		if err := c.Call(ctx, "SYNO.Core.Group", 1, "list", url.Values{"offset": {"0"}, "limit": {"-1"}}, &data); err != nil {
+			return nil, err
+		}
+		if data.Groups == nil || data.Total == nil || *data.Total != len(data.Groups) {
+			return nil, errors.New("DSM group listing is incomplete")
+		}
+		for _, g := range data.Groups {
+			if g.Name == "" {
+				return nil, errors.New("DSM returned an unnamed group")
+			}
+		}
+		return data.Groups, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if data.Groups == nil || data.Total == nil || *data.Total != len(data.Groups) {
-		return nil, errors.New("DSM group listing is incomplete")
-	}
-	for _, g := range data.Groups {
-		if g.Name == "" {
-			return nil, errors.New("DSM returned an unnamed group")
-		}
-	}
-	return data.Groups, nil
+	return value.([]Group), nil
 }
 
 func (c *Client) Group(ctx context.Context, name string) (Group, error) {
