@@ -119,17 +119,17 @@ func (r *sharedFolderResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	_, err := r.client.Share(ctx, m.Name.ValueString())
-	if err == nil {
+	err := r.client.CreateShareVerified(ctx, m.object())
+	if errors.Is(err, dsm.ErrShareExists) {
 		resp.Diagnostics.AddError("Shared folder already exists", "Import the existing folder by name. Creating a resource never adopts or changes an existing folder.")
 		return
 	}
-	if !errors.Is(err, dsm.ErrNotFound) {
-		resp.Diagnostics.AddError("Cannot check shared-folder identity", err.Error())
-		return
-	}
-	err = r.client.WriteShare(ctx, "create", m.object())
 	if err != nil {
+		var checkErr *dsm.ShareCheckError
+		if errors.As(err, &checkErr) {
+			resp.Diagnostics.AddError("Cannot check shared-folder identity", checkErr.Err.Error())
+			return
+		}
 		if !rejectedCreation(err) {
 			m.UUID = types.StringNull()
 			if m.HideUnauthorizedFiles.IsUnknown() {

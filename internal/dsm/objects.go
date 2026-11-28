@@ -108,6 +108,31 @@ func (c *Client) Share(ctx context.Context, name string) (Share, error) {
 	return Share{}, ErrNotFound
 }
 
+type ShareCheckError struct{ Err error }
+
+func (e *ShareCheckError) Error() string { return e.Err.Error() }
+func (e *ShareCheckError) Unwrap() error { return e.Err }
+
+var ErrShareExists = errors.New("shared folder already exists")
+
+func (c *Client) CreateShareVerified(ctx context.Context, s Share) error {
+	c.mutation.Lock()
+	defer c.mutation.Unlock()
+	if _, err := c.Share(ctx, s.Name); err == nil {
+		return ErrShareExists
+	} else if !errors.Is(err, ErrNotFound) {
+		return &ShareCheckError{Err: err}
+	}
+	var reply MutationReply
+	if err := c.Call(ctx, "SYNO.Core.Share", 1, "create", shareMutationArgs("create", s), &reply); err != nil {
+		return err
+	}
+	if reply.Failed() || reply.TaskID != "" || (reply.Finish != nil && !*reply.Finish) {
+		return errors.New("DSM did not acknowledge the shared-folder creation; inspect and reconcile before retrying")
+	}
+	return nil
+}
+
 var ErrShareIdentityChanged = errors.New("shared-folder identity changed before or during the mutation")
 
 func shareMutationArgs(method string, s Share) url.Values {
