@@ -2,6 +2,7 @@ package dsm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"net/url"
@@ -99,6 +100,36 @@ func ValidateAccessPolicy(users, groups map[string]string) error {
 	return nil
 }
 
+func accessRank(access string) int {
+	switch access {
+	case "deny":
+		return -1
+	case "read_only":
+		return 1
+	case "read_write":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func accessTarget(applied, current, desired map[string]string, restrictive bool) map[string]string {
+	target := maps.Clone(applied)
+	if target == nil {
+		target = map[string]string{}
+	}
+	for name, want := range desired {
+		have := current[name]
+		if restrictive && accessRank(want) < accessRank(have) {
+			target[name] = want
+		}
+		if !restrictive && accessRank(want) > accessRank(have) {
+			target[name] = want
+		}
+	}
+	return target
+}
+
 func (c *Client) WriteAccessPolicy(ctx context.Context, share string, expected AccessPolicy, users, groups map[string]string) error {
 	if err := ValidateAccessPolicy(users, groups); err != nil {
 		return err
@@ -112,40 +143,60 @@ func (c *Client) WriteAccessPolicy(ctx context.Context, share string, expected A
 	if current.ShareUUID != expected.ShareUUID || !maps.Equal(current.UserIDs, expected.UserIDs) || !maps.Equal(current.GroupIDs, expected.GroupIDs) || !maps.Equal(current.Users, expected.Users) || !maps.Equal(current.Groups, expected.Groups) {
 		return errors.New("DSM identities or permission policy changed before mutation; re-run plan")
 	}
-	scopes := []struct {
-		kind             string
-		desired, current map[string]string
-		ids              map[string]int64
-	}{{"local_user", users, current.Users, current.UserIDs}, {"local_group", groups, current.Groups, current.GroupIDs}}
-	for _, scope := range scopes {
-		for name := range scope.desired {
-			if scope.ids[name] <= 0 {
+	type scope struct {
+		kind    string
+		desired map[string]string
+		current map[string]string
+		ids     map[string]int64
+		items   []map[string]json.RawMessage
+		applied map[string]string
+	}
+	scopes := []*scope{
+		{"local_user", users, current.Users, current.UserIDs, nil, maps.Clone(current.Users)},
+		{"local_group", groups, current.Groups, current.GroupIDs, nil, maps.Clone(current.Groups)},
+	}
+	for _, sc := range scopes {
+		for name := range sc.desired {
+			if sc.ids[name] <= 0 {
 				return errors.New("a configured permission principal does not exist")
 			}
 		}
-	}
-	for _, scope := range scopes {
-		if maps.Equal(scope.desired, scope.current) {
-			continue
-		}
-		items, err := c.permissions(ctx, share, scope.kind)
+		items, err := c.permissions(ctx, share, sc.kind)
 		if err != nil {
 			return err
 		}
-		payload := make([]map[string]any, 0, len(items))
-		for _, item := range items {
+		sc.items = items
+	}
+	write := func(sc *scope, target map[string]string) error {
+		if maps.Equal(target, sc.applied) {
+			return nil
+		}
+		payload := make([]map[string]any, 0, len(sc.items))
+		for _, item := range sc.items {
 			entry, err := decodePermission(item)
 			if err != nil {
 				return err
 			}
-			access := scope.desired[entry.Name]
+			access := target[entry.Name]
 			row := map[string]any{"name": entry.Name, "is_readonly": access == "read_only", "is_writable": access == "read_write", "is_deny": access == "deny"}
 			if inherit, ok := item["inherit"]; ok {
 				row["inherit"] = inherit
 			}
 			payload = append(payload, row)
 		}
-		if err := c.Call(ctx, "SYNO.Core.Share.Permission", 1, "set", url.Values{"name": {share}, "user_group_type": {scope.kind}, "permissions": {JSON(payload)}}, nil); err != nil {
+		if err := c.Call(ctx, "SYNO.Core.Share.Permission", 1, "set", url.Values{"name": {share}, "user_group_type": {sc.kind}, "permissions": {JSON(payload)}}, nil); err != nil {
+			return err
+		}
+		sc.applied = maps.Clone(target)
+		return nil
+	}
+	for _, sc := range scopes {
+		if err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, true)); err != nil {
+			return err
+		}
+	}
+	for _, sc := range scopes {
+		if err := write(sc, accessTarget(sc.applied, sc.current, sc.desired, false)); err != nil {
 			return err
 		}
 	}

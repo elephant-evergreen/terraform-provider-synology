@@ -74,3 +74,31 @@ func TestAccessPolicyReadsOneGroupListAndConfirmsEveryIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessTargetRestrictsBeforeGranting(t *testing.T) {
+	current := map[string]string{"writer": "read_write", "reader": "read_only", "denied": "deny"}
+	desired := map[string]string{"writer": "read_only", "reader": "read_write", "denied": ""}
+
+	restrictive := accessTarget(current, current, desired, true)
+	if restrictive["writer"] != "read_only" || restrictive["reader"] != "read_only" || restrictive["denied"] != "deny" {
+		t.Fatalf("restrictive phase = %v", restrictive)
+	}
+	permissive := accessTarget(restrictive, current, desired, false)
+	if permissive["writer"] != "read_only" || permissive["reader"] != "read_write" || permissive["denied"] != "" {
+		t.Fatalf("permissive phase = %v", permissive)
+	}
+}
+
+func TestAccessTargetAddsDenyBeforeGrant(t *testing.T) {
+	current := map[string]string{}
+	desired := map[string]string{"denied": "deny", "granted": "read_write"}
+
+	restrictive := accessTarget(current, current, desired, true)
+	if restrictive["denied"] != "deny" || restrictive["granted"] != "" {
+		t.Fatalf("restrictive phase = %v", restrictive)
+	}
+	permissive := accessTarget(restrictive, current, desired, false)
+	if permissive["denied"] != "deny" || permissive["granted"] != "read_write" {
+		t.Fatalf("permissive phase = %v", permissive)
+	}
+}
